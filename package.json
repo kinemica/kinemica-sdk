@@ -1,0 +1,61 @@
+{
+  "name": "@kinemica/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Kinemica physical-world work execution.",
+  "keywords": [
+    "kinemica",
+    "physical-work",
+    "policy",
+    "robotics",
+    "sdk"
+  ],
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/sylvesterkaczmarek/kinemica-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/sylvesterkaczmarek/kinemica-sdk/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sylvesterkaczmarek/kinemica-sdk.git"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.34.0",
+    "@types/node": "24.3.0",
+    "eslint": "9.34.0",
+    "prettier": "3.6.2",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.41.0",
+    "vitest": "3.2.4"
+  }
+}
