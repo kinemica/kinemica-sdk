@@ -2,17 +2,19 @@
 
 Kinemica is a work-execution system for physical jobs performed by AI agents, people and machines. `@kinemica/sdk` provides a typed interface to Kinemica's Developer API while Kinemica retains server-side authority over permissions, policy and audit.
 
-Version `0.1.0` targets server-side Node.js and exposes the two operations in the current Developer API Preview. The package is prepared but is not yet published to npm; publication waits for Production Developer API verification.
+Version `0.1.0` targets server-side Node.js and exposes the two operations in the live Production Developer API. Kinemica remains the server-side authority for identity, workspace scope, permissions, deterministic policy, audit and persistence.
 
 ## Installation
-
-After publication:
 
 ```sh
 pnpm add @kinemica/sdk
 ```
 
-For Preview engineering verification, build this repository and install the inspected `.tgz` produced by `pnpm pack`.
+Or with npm:
+
+```sh
+npm install @kinemica/sdk
+```
 
 ## Client
 
@@ -21,14 +23,23 @@ import { Kinemica } from "@kinemica/sdk";
 
 const kinemica = new Kinemica({
   apiKey: process.env.KINEMICA_API_KEY!,
-  baseUrl: process.env.KINEMICA_API_BASE_URL!,
   timeoutMs: 10_000,
+});
+
+const work = await kinemica.work.retrieve("job_123");
+
+const decision = await kinemica.actions.authorize({
+  workId: work.id,
+  taskId: "task_456",
+  workerId: "worker_789",
+  action: "assign_worker",
+  idempotencyKey: "assignment-check-001",
 });
 ```
 
-`baseUrl` is required in v0.1. During engineering verification it must be a Developer API Preview URL ending in `/api/v1`. Do not treat a private immutable Vercel Preview URL as a permanent Production endpoint. Non-local HTTP URLs are rejected.
+The SDK uses `https://app.kinemica.com/api/v1` by default. Supply `baseUrl` only to target an authorised Preview, local or test environment. Non-local HTTP URLs are rejected.
 
-The SDK sends the key only as `Authorization: Bearer <API_KEY>`. It does not create, list or revoke keys and never places credentials in URLs or error messages.
+API keys are server secrets. The SDK sends the key only as `Authorization: Bearer <API_KEY>`. It does not create, list or revoke keys and never places credentials in URLs or error messages. Version 0.1 is for server-side Node.js use and does not support browser clients.
 
 ## Retrieve work
 
@@ -104,9 +115,9 @@ The SDK does not read a camera, include OpenCV or Picamera, control a robot, or 
 
 ## Current limitations
 
-- Developer API v0.1 engineering verification uses the Preview/DEV environment; the Production Developer API is not live.
 - Only `work.retrieve()` and assignment-focused `actions.authorize()` exist.
 - There is no work creation, evidence submission, dispatch, approval recording, robot control, browser client, CLI, webhook or retry framework.
+- No public physical-mutation API exists yet; authorization evaluates and records policy but does not assign or dispatch.
 - Kinemica remains a prototype and is not approved for live safety-critical work.
 
 ## Development
@@ -117,7 +128,7 @@ pnpm verify
 pnpm pack
 ```
 
-Live Preview verification is a separate secure run with disposable synthetic DEV data and test credentials; no live key belongs in CI or this repository.
+Live Production verification is a separate secure release gate using disposable synthetic data and temporary credentials; no live key belongs in CI or this repository.
 
 ## License
 

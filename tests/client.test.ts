@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const apiKey = `kin_test_${"a".repeat(43)}`;
 const baseUrl = "https://preview.example/api/v1";
+const productionBaseUrl = "https://app.kinemica.com/api/v1";
 
 function mockFetch(implementation: typeof fetch): typeof fetch {
   return vi.fn(implementation) as unknown as typeof fetch;
@@ -139,7 +140,7 @@ function client(
 }
 
 describe("client construction", () => {
-  it("requires a non-empty API key and explicit valid base URL", () => {
+  it("requires a non-empty API key and accepts a valid base URL override", () => {
     expect(() => new Kinemica({ apiKey: "", baseUrl })).toThrow(
       KinemicaValidationError,
     );
@@ -152,6 +153,19 @@ describe("client construction", () => {
     expect(
       () => new Kinemica({ apiKey, baseUrl: "http://localhost:3000/api/v1" }),
     ).not.toThrow();
+  });
+
+  it("uses the Production Developer API when baseUrl is omitted", async () => {
+    const fetch = mockFetch(async (input) => {
+      expect(input).toBe(`${productionBaseUrl}/work/job_123`);
+      return jsonResponse(workResponse());
+    });
+    const kinemica = new Kinemica({ apiKey, fetch });
+
+    await expect(kinemica.work.retrieve("job_123")).resolves.toMatchObject({
+      id: "job_123",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("validates a sensible timeout", () => {

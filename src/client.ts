@@ -19,10 +19,11 @@ import type { KinemicaApiErrorCode, RequestOptions } from "./types.js";
 
 const defaultTimeoutMs = 10_000;
 const maximumTimeoutMs = 300_000;
+const productionBaseUrl = "https://app.kinemica.com/api/v1";
 
 export interface KinemicaOptions {
   readonly apiKey: string;
-  readonly baseUrl: string;
+  readonly baseUrl?: string;
   readonly timeoutMs?: number;
   readonly fetch?: typeof globalThis.fetch;
 }
@@ -52,13 +53,17 @@ function validateApiKey(apiKey: string): string {
   return apiKey;
 }
 
-function validateBaseUrl(baseUrl: string): string {
-  if (typeof baseUrl !== "string" || baseUrl.trim().length === 0) {
-    throw new KinemicaValidationError("baseUrl must be explicitly supplied.");
+function validateBaseUrl(baseUrl: string | undefined): string {
+  const configuredBaseUrl = baseUrl ?? productionBaseUrl;
+  if (
+    typeof configuredBaseUrl !== "string" ||
+    configuredBaseUrl.trim().length === 0
+  ) {
+    throw new KinemicaValidationError("baseUrl must be a non-empty URL.");
   }
   let url: URL;
   try {
-    url = new URL(baseUrl);
+    url = new URL(configuredBaseUrl);
   } catch {
     throw new KinemicaValidationError("baseUrl must be a valid absolute URL.");
   }

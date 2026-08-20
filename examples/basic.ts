@@ -5,13 +5,12 @@ import {
 } from "../src/index.js";
 
 const apiKey = process.env.KINEMICA_API_KEY;
-const baseUrl = process.env.KINEMICA_API_BASE_URL;
 
-if (!apiKey || !baseUrl) {
-  throw new Error("KINEMICA_API_KEY and KINEMICA_API_BASE_URL are required.");
+if (!apiKey) {
+  throw new Error("KINEMICA_API_KEY is required.");
 }
 
-const kinemica = new Kinemica({ apiKey, baseUrl });
+const kinemica = new Kinemica({ apiKey });
 
 try {
   const work = await kinemica.work.retrieve("job_123");

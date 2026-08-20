@@ -10,13 +10,13 @@
     "sdk"
   ],
   "license": "Apache-2.0",
-  "homepage": "https://github.com/sylvesterkaczmarek/kinemica-sdk#readme",
+  "homepage": "https://github.com/kinemica/kinemica-sdk#readme",
   "bugs": {
-    "url": "https://github.com/sylvesterkaczmarek/kinemica-sdk/issues"
+    "url": "https://github.com/kinemica/kinemica-sdk/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sylvesterkaczmarek/kinemica-sdk.git"
+    "url": "git+https://github.com/kinemica/kinemica-sdk.git"
   },
   "type": "module",
   "sideEffects": false,
