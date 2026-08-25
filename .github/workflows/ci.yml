@@ -10,15 +10,23 @@ permissions:
 
 jobs:
   verify:
+    name: Verify (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
+          version: 11.19.0
           run_install: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
@@ -26,3 +34,103 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  package:
+    name: Package smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Pack package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package-artifact
+          pnpm pack --pack-destination package-artifact
+          npm pack --dry-run --json >/tmp/npm-pack.json
+          cat /tmp/npm-pack.json
+          TARBALL="$(find package-artifact -maxdepth 1 -name '*.tgz' -print -quit)"
+          test -n "$TARBALL"
+          tar -tzf "$TARBALL" | grep -q '^package/dist/index.js$'
+          tar -tzf "$TARBALL" | grep -q '^package/dist/index.d.ts$'
+          tar -tzf "$TARBALL" | grep -q '^package/README.md$'
+          tar -tzf "$TARBALL" | grep -q '^package/LICENSE$'
+      - name: Install packed package in a clean project
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARBALL="$(find package-artifact -maxdepth 1 -name '*.tgz' -print -quit)"
+          mkdir -p /tmp/kinemica-sdk-consumer
+          cd /tmp/kinemica-sdk-consumer
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$TARBALL"
+          npm install --save-dev typescript@5.9.2
+          node --input-type=module <<'JS'
+          import { Kinemica, KinemicaValidationError } from "@kinemica/sdk";
+
+          if (typeof Kinemica !== "function") throw new Error("Kinemica export missing");
+          const client = new Kinemica({
+            apiKey: "package-smoke-key",
+            baseUrl: "http://localhost:3000",
+            fetch: async () => new Response("{}", { status: 200 }),
+          });
+          if (!client.work || !client.actions) throw new Error("SDK resources missing");
+          let rejected = false;
+          try {
+            new Kinemica({ apiKey: " " });
+          } catch (error) {
+            rejected = error instanceof KinemicaValidationError;
+          }
+          if (!rejected) throw new Error("Validation error export is not functional");
+          JS
+          cat >consumer.ts <<'TS'
+          import { Kinemica, type KinemicaOptions } from "@kinemica/sdk";
+
+          const options: KinemicaOptions = {
+            apiKey: "type-smoke-key",
+            baseUrl: "http://localhost:3000",
+          };
+          const client = new Kinemica(options);
+          void client.work;
+          void client.actions;
+          TS
+          npx tsc --strict --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext consumer.ts
+
+  cross-platform:
+    name: Cross-platform smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Import built SDK
+        run: node --input-type=module -e "import('./dist/index.js').then((m) => { if (typeof m.Kinemica !== 'function') throw new Error('Kinemica export missing') })"
