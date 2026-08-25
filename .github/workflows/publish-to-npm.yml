@@ -1,0 +1,137 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git tag to publish
+        required: true
+        default: v0.1.0
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build package
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Verify release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          test "${{ inputs.ref }}" = "v${VERSION}" || {
+            echo "Release ref ${{ inputs.ref }} does not match package version v${VERSION}." >&2
+            exit 1
+          }
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Verify source
+        run: pnpm verify
+      - name: Pack release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package-artifact
+          pnpm pack --pack-destination package-artifact
+          npm pack --dry-run --json >/tmp/npm-pack.json
+          cat /tmp/npm-pack.json
+          TARBALL="$(find package-artifact -maxdepth 1 -name '*.tgz' -print -quit)"
+          test -n "$TARBALL"
+          tar -tzf "$TARBALL" | grep -q '^package/dist/index.js$'
+          tar -tzf "$TARBALL" | grep -q '^package/dist/index.d.ts$'
+          tar -tzf "$TARBALL" | grep -q '^package/README.md$'
+          tar -tzf "$TARBALL" | grep -q '^package/LICENSE$'
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: package-artifact/*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: Publish package
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: package-artifact
+      - name: Publish to npm with provenance
+        run: npm publish package-artifact/*.tgz --access public --provenance
+
+  verify-npm:
+    name: Verify public npm install (Node ${{ matrix.node-version }})
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install released package from public npm
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kinemica-sdk-npm-smoke
+          cd /tmp/kinemica-sdk-npm-smoke
+          npm init -y >/dev/null
+          for attempt in {1..12}; do
+            if npm install --no-cache "@kinemica/sdk@${VERSION}"; then
+              break
+            fi
+            if [[ "$attempt" -eq 12 ]]; then
+              echo "@kinemica/sdk ${VERSION} was not installable from public npm." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          node --input-type=module <<'JS'
+          import { Kinemica, KinemicaValidationError } from "@kinemica/sdk";
+
+          if (typeof Kinemica !== "function") throw new Error("Kinemica export missing");
+          const client = new Kinemica({
+            apiKey: "npm-smoke-key",
+            baseUrl: "http://localhost:3000",
+            fetch: async () => new Response("{}", { status: 200 }),
+          });
+          if (!client.work || !client.actions) throw new Error("SDK resources missing");
+          let rejected = false;
+          try {
+            new Kinemica({ apiKey: " " });
+          } catch (error) {
+            rejected = error instanceof KinemicaValidationError;
+          }
+          if (!rejected) throw new Error("Validation error export is not functional");
+          JS
