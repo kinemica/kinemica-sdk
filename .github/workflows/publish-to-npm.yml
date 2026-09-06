@@ -89,7 +89,7 @@ jobs:
           name: npm-package
           path: package-artifact
       - name: Publish to npm with provenance
-        run: npm publish ./package-artifact/*.tgz --access public --provenance
+        run: npm publish ./package-artifact/*.tgz --access public --provenance --loglevel verbose
 
   verify-npm:
     name: Verify public npm install (Node ${{ matrix.node-version }})
