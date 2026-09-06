@@ -117,6 +117,8 @@ export interface AuthorizationDecision extends PolicyDecision {
 
 export type DeviceEventMetadataValue = string | number | boolean | null;
 
+export type DeviceEvidenceMediaType = "image/jpeg" | "image/png" | "image/webp";
+
 export interface DeviceHeartbeatParams {
   readonly idempotencyKey: string;
 }
@@ -134,8 +136,31 @@ export interface SubmitDeviceEventParams {
   readonly kind: string;
   readonly observedAt: string;
   readonly confidence?: number;
+  readonly evidenceIds?: readonly string[];
   readonly metadata?: Readonly<Record<string, DeviceEventMetadataValue>>;
   readonly idempotencyKey: string;
+}
+
+export interface UploadDeviceEvidenceParams {
+  readonly bytes: Uint8Array;
+  readonly mediaType: DeviceEvidenceMediaType;
+  readonly observedAt: string;
+  readonly originalName?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface DeviceEvidenceUpload {
+  readonly evidenceId: string;
+  readonly deviceId: string;
+  readonly mediaType: DeviceEvidenceMediaType;
+  readonly sizeBytes: number;
+  readonly width: number;
+  readonly height: number;
+  readonly contentDigest: string;
+  readonly observedAt: string;
+  readonly uploadedAt: string;
+  readonly requestId: string;
+  readonly replayed: boolean;
 }
 
 export interface DevicePolicyDecision {
@@ -157,6 +182,29 @@ export interface DeviceEventResult {
   readonly replayed: boolean;
 }
 
+export type DeviceReviewWorkStatus =
+  | "AWAITING_HUMAN_DECISION"
+  | "EXISTING_EPISODE"
+  | "QUEUED";
+
+export interface DeviceReviewEventResult {
+  readonly eventId: string;
+  readonly deviceId: string;
+  readonly kind: string;
+  readonly receivedAt: string;
+  readonly episodeId: string;
+  readonly work: {
+    readonly status: DeviceReviewWorkStatus;
+    readonly jobId: string | null;
+  };
+  readonly requestId: string;
+  readonly replayed: boolean;
+}
+
+export type DeviceEventSubmissionResult =
+  | DeviceEventResult
+  | DeviceReviewEventResult;
+
 export interface RequestOptions {
   readonly signal?: AbortSignal;
 }
@@ -167,6 +215,7 @@ export type KinemicaApiErrorCode =
   | "forbidden"
   | "not_found"
   | "conflict"
+  | "device_event_unconfigured"
   | "rate_limited"
   | "service_unavailable"
   | "internal_error";

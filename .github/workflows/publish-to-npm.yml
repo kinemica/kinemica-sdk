@@ -6,7 +6,7 @@ on:
       ref:
         description: Git tag to publish
         required: true
-        default: v0.2.0
+        default: v0.3.0
         type: string
 
 permissions:
@@ -138,7 +138,13 @@ jobs:
             baseUrl: "http://localhost:3000",
             fetch: async () => new Response("{}", { status: 200 }),
           });
-          if (!device.events || typeof device.heartbeat !== "function") {
+          if (
+            !device.events ||
+            typeof device.events.submit !== "function" ||
+            !device.evidence ||
+            typeof device.evidence.upload !== "function" ||
+            typeof device.heartbeat !== "function"
+          ) {
             throw new Error("Device SDK resources missing");
           }
           let rejected = false;

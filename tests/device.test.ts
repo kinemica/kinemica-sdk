@@ -4,6 +4,7 @@ import {
   KinemicaConflictError,
   KinemicaConnectionError,
   KinemicaDevice,
+  KinemicaForbiddenError,
   KinemicaTimeoutError,
   KinemicaValidationError,
 } from "../src/index.js";
@@ -81,6 +82,42 @@ function eventResponse(
     },
     requestId: "request_event_001",
     replayed,
+  };
+}
+
+function evidenceResponse(replayed = false): unknown {
+  return {
+    data: {
+      evidenceId: "device_evidence_001",
+      deviceId: "device_camera_001",
+      mediaType: "image/png",
+      sizeBytes: 24,
+      width: 48,
+      height: 32,
+      contentDigest: "a".repeat(64),
+      observedAt: now,
+      uploadedAt: now,
+    },
+    requestId: "request_evidence_001",
+    replayed,
+  };
+}
+
+function reviewEventResponse(): unknown {
+  return {
+    data: {
+      eventId: "device_event_review_001",
+      deviceId: "device_camera_001",
+      kind: "PERSON_DETECTED",
+      receivedAt: now,
+      episodeId: "device_detection_episode_001",
+      work: {
+        status: "AWAITING_HUMAN_DECISION",
+        jobId: "job_device_review_001",
+      },
+    },
+    requestId: "request_event_review_001",
+    replayed: false,
   };
 }
 
@@ -203,7 +240,147 @@ describe("KinemicaDevice heartbeat", () => {
   });
 });
 
+describe("KinemicaDevice evidence", () => {
+  it("uploads Buffer-compatible image bytes with the exact device evidence contract", async () => {
+    const bytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48,
+      0x44, 0x52, 0, 0, 0, 0x30, 0, 0, 0, 0x20,
+    ]);
+    const fetch = mockFetch(async (input, init) => {
+      expect(input).toBe(`${baseUrl}/devices/evidence`);
+      expect(init?.method).toBe("POST");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe(`Bearer ${credential}`);
+      expect(headers.get("content-type")).toBe("image/png");
+      expect(headers.get("idempotency-key")).toBe("evidence-camera-0001");
+      expect(headers.get("x-kinemica-observed-at")).toBe(now);
+      expect(headers.get("x-kinemica-original-name")).toBe("snapshot.png");
+      expect(init?.body).toBe(bytes);
+      return jsonResponse(evidenceResponse(), 201);
+    });
+    const device = new KinemicaDevice({ credential, baseUrl, fetch });
+
+    await expect(
+      device.evidence.upload({
+        bytes,
+        mediaType: "image/png",
+        observedAt: now,
+        originalName: "snapshot.png",
+        idempotencyKey: "evidence-camera-0001",
+      }),
+    ).resolves.toMatchObject({
+      evidenceId: "device_evidence_001",
+      deviceId: "device_camera_001",
+      mediaType: "image/png",
+      width: 48,
+      height: 32,
+      replayed: false,
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("rejects unsupported media types and excessive payloads before transport", async () => {
+    const fetch = mockFetch(async () => jsonResponse(evidenceResponse(), 201));
+    const device = new KinemicaDevice({ credential, baseUrl, fetch });
+
+    await expect(
+      device.evidence.upload({
+        bytes: new Uint8Array([1]),
+        mediaType: "image/gif",
+        observedAt: now,
+        idempotencyKey: "evidence-media-0001",
+      } as never),
+    ).rejects.toBeInstanceOf(KinemicaValidationError);
+    await expect(
+      device.evidence.upload({
+        bytes: new Uint8Array(3_000_001),
+        mediaType: "image/jpeg",
+        observedAt: now,
+        idempotencyKey: "evidence-size-0001",
+      }),
+    ).rejects.toBeInstanceOf(KinemicaValidationError);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("maps cross-device evidence rejection without leaking the credential", async () => {
+    const fetch = mockFetch(async () =>
+      jsonResponse(
+        {
+          error: {
+            code: "forbidden",
+            message: `Evidence is out of scope for ${credential}`,
+            requestId: "request_forbidden_001",
+          },
+        },
+        403,
+      ),
+    );
+    const device = new KinemicaDevice({ credential, baseUrl, fetch });
+    const error = await device.events
+      .submit({
+        kind: "PERSON_DETECTED",
+        observedAt: now,
+        evidenceIds: ["device_evidence_other_001"],
+        idempotencyKey: "event-cross-device-0001",
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(KinemicaForbiddenError);
+    expect(String(error)).not.toContain(credential);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry an evidence upload after a network failure", async () => {
+    const fetch = mockFetch(async () => {
+      throw new Error("socket closed");
+    });
+    const device = new KinemicaDevice({ credential, baseUrl, fetch });
+
+    await expect(
+      device.evidence.upload({
+        bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+        mediaType: "image/jpeg",
+        observedAt: now,
+        idempotencyKey: "evidence-no-retry-0001",
+      }),
+    ).rejects.toBeInstanceOf(KinemicaConnectionError);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+});
+
 describe("KinemicaDevice events", () => {
+  it("references uploaded evidence and returns review work without manufacturing a policy result", async () => {
+    const fetch = mockFetch(async (input, init) => {
+      expect(input).toBe(`${baseUrl}/devices/events`);
+      expect(requestJson(init)).toEqual({
+        kind: "PERSON_DETECTED",
+        observedAt: now,
+        evidenceIds: ["device_evidence_001"],
+        metadata: {},
+      });
+      return jsonResponse(reviewEventResponse(), 201);
+    });
+    const device = new KinemicaDevice({ credential, baseUrl, fetch });
+
+    const event = await device.events.submit({
+      kind: "PERSON_DETECTED",
+      observedAt: now,
+      evidenceIds: ["device_evidence_001"],
+      metadata: {},
+      idempotencyKey: "event-with-evidence-0001",
+    });
+
+    expect(event).toMatchObject({
+      episodeId: "device_detection_episode_001",
+      work: {
+        status: "AWAITING_HUMAN_DECISION",
+        jobId: "job_device_review_001",
+      },
+    });
+    expect(event).not.toHaveProperty("decision");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it.each(["ALLOW", "BLOCK", "REQUIRE_APPROVAL"] as const)(
     "returns the server-owned %s policy decision",
     async (outcome) => {

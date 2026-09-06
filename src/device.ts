@@ -2,17 +2,25 @@ import { HttpClient, type KinemicaTransportOptions } from "./client.js";
 import { KinemicaApiError, KinemicaValidationError } from "./errors.js";
 import type {
   DeviceEventResult,
+  DeviceEventSubmissionResult,
+  DeviceEvidenceUpload,
   DeviceHeartbeat,
   DeviceHeartbeatParams,
   RequestOptions,
   SubmitDeviceEventParams,
+  UploadDeviceEvidenceParams,
 } from "./types.js";
 import {
+  parseDeviceEvidenceResponse,
   parseDeviceEventResponse,
   parseDeviceHeartbeatResponse,
   parseDevicePairingResponse,
   validateDeviceConfidence,
   validateDeviceCredential,
+  validateDeviceEvidenceBytes,
+  validateDeviceEvidenceIds,
+  validateDeviceEvidenceMediaType,
+  validateDeviceEvidenceOriginalName,
   validateDeviceEventKind,
   validateDeviceMetadata,
   validateDeviceObservedAt,
@@ -51,9 +59,23 @@ export class DeviceEventsResource {
   constructor(private readonly client: HttpClient) {}
 
   async submit(
+    params: SubmitDeviceEventParams & { readonly evidenceIds?: undefined },
+    options?: RequestOptions,
+  ): Promise<DeviceEventResult>;
+  async submit(
+    params: SubmitDeviceEventParams & {
+      readonly evidenceIds: readonly [string, ...string[]];
+    },
+    options?: RequestOptions,
+  ): Promise<import("./types.js").DeviceReviewEventResult>;
+  async submit(
     params: SubmitDeviceEventParams,
     options?: RequestOptions,
-  ): Promise<DeviceEventResult> {
+  ): Promise<DeviceEventSubmissionResult>;
+  async submit(
+    params: SubmitDeviceEventParams,
+    options?: RequestOptions,
+  ): Promise<DeviceEventSubmissionResult> {
     try {
       const keys = Object.keys(params);
       if (
@@ -63,6 +85,7 @@ export class DeviceEventsResource {
               "kind",
               "observedAt",
               "confidence",
+              "evidenceIds",
               "metadata",
               "idempotencyKey",
             ].includes(key),
@@ -73,6 +96,7 @@ export class DeviceEventsResource {
       validateDeviceEventKind(params.kind);
       validateDeviceObservedAt(params.observedAt);
       validateDeviceConfidence(params.confidence);
+      validateDeviceEvidenceIds(params.evidenceIds);
       validateDeviceMetadata(params.metadata);
       validateIdempotencyKey(params.idempotencyKey);
     } catch {
@@ -89,6 +113,9 @@ export class DeviceEventsResource {
         ...(params.confidence === undefined
           ? {}
           : { confidence: params.confidence }),
+        ...(params.evidenceIds === undefined
+          ? {}
+          : { evidenceIds: params.evidenceIds }),
         metadata: params.metadata ?? {},
       },
       ...(options ? { options } : {}),
@@ -103,8 +130,64 @@ export class DeviceEventsResource {
   }
 }
 
+export class DeviceEvidenceResource {
+  constructor(private readonly client: HttpClient) {}
+
+  async upload(
+    params: UploadDeviceEvidenceParams,
+    options?: RequestOptions,
+  ): Promise<DeviceEvidenceUpload> {
+    try {
+      if (
+        Object.keys(params).some(
+          (key) =>
+            ![
+              "bytes",
+              "mediaType",
+              "observedAt",
+              "originalName",
+              "idempotencyKey",
+            ].includes(key),
+        )
+      ) {
+        throw new Error("Unsupported device evidence field.");
+      }
+      validateDeviceEvidenceBytes(params.bytes);
+      validateDeviceEvidenceMediaType(params.mediaType);
+      validateDeviceObservedAt(params.observedAt);
+      validateDeviceEvidenceOriginalName(params.originalName);
+      validateIdempotencyKey(params.idempotencyKey);
+    } catch {
+      throw new KinemicaValidationError("The device evidence is invalid.");
+    }
+
+    const response = await this.client.request({
+      method: "POST",
+      path: "/devices/evidence",
+      headers: {
+        "Content-Type": params.mediaType,
+        "Idempotency-Key": params.idempotencyKey,
+        "X-Kinemica-Observed-At": params.observedAt,
+        ...(params.originalName === undefined
+          ? {}
+          : { "X-Kinemica-Original-Name": params.originalName.trim() }),
+      },
+      rawBody: params.bytes,
+      ...(options ? { options } : {}),
+    });
+    try {
+      return parseDeviceEvidenceResponse(response);
+    } catch {
+      throw new KinemicaApiError(
+        "Kinemica returned an incompatible device evidence response.",
+      );
+    }
+  }
+}
+
 export class KinemicaDevice {
   readonly events: DeviceEventsResource;
+  readonly evidence: DeviceEvidenceResource;
   readonly deviceId: string | undefined;
   readonly name: string | undefined;
   readonly credentialExpiresAt: string | undefined;
@@ -121,6 +204,7 @@ export class KinemicaDevice {
     this.#credential = options.credential;
     this.#client = new HttpClient(options, this.#credential);
     this.events = new DeviceEventsResource(this.#client);
+    this.evidence = new DeviceEvidenceResource(this.#client);
     this.deviceId = paired?.deviceId;
     this.name = paired?.name;
     this.credentialExpiresAt = paired?.expiresAt;
