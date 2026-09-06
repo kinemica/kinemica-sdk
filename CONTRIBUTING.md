@@ -1,6 +1,6 @@
 # Contributing
 
-The v0.1 SDK deliberately mirrors only Kinemica's reviewed public Developer API contract. Changes must not add local policy, undocumented endpoints, automatic authorization retries or direct database access.
+The SDK deliberately mirrors only Kinemica's reviewed public Developer and Connected Devices API contracts. Changes must not add local policy, undocumented endpoints, automatic request retries or direct database access.
 
 Before proposing a change:
 

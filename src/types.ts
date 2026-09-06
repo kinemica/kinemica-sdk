@@ -115,6 +115,48 @@ export interface AuthorizationDecision extends PolicyDecision {
   readonly replayed: boolean;
 }
 
+export type DeviceEventMetadataValue = string | number | boolean | null;
+
+export interface DeviceHeartbeatParams {
+  readonly idempotencyKey: string;
+}
+
+export interface DeviceHeartbeat {
+  readonly deviceId: string;
+  readonly status: "ONLINE";
+  readonly lastSeenAt: string;
+  readonly serverTime: string;
+  readonly requestId: string;
+  readonly replayed: boolean;
+}
+
+export interface SubmitDeviceEventParams {
+  readonly kind: string;
+  readonly observedAt: string;
+  readonly confidence?: number;
+  readonly metadata?: Readonly<Record<string, DeviceEventMetadataValue>>;
+  readonly idempotencyKey: string;
+}
+
+export interface DevicePolicyDecision {
+  readonly id: string;
+  readonly outcome: PolicyOutcome;
+  readonly ruleId: string;
+  readonly policyVersion: number;
+  readonly reason: string;
+  readonly remediation: string | null;
+}
+
+export interface DeviceEventResult {
+  readonly eventId: string;
+  readonly deviceId: string;
+  readonly kind: string;
+  readonly receivedAt: string;
+  readonly decision: DevicePolicyDecision;
+  readonly requestId: string;
+  readonly replayed: boolean;
+}
+
 export interface RequestOptions {
   readonly signal?: AbortSignal;
 }

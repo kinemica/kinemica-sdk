@@ -1,6 +1,9 @@
 import type {
   ApprovalStatus,
   AuthorizationDecision,
+  DeviceEventResult,
+  DeviceHeartbeat,
+  DeviceEventMetadataValue,
   EvidenceVerificationOutcome,
   ExceptionStatus,
   KinemicaApiErrorCode,
@@ -359,6 +362,93 @@ export function parseAuthorizationResponse(
   };
 }
 
+export interface DevicePairingResponse {
+  readonly deviceId: string;
+  readonly name: string;
+  readonly credential: string;
+  readonly expiresAt: string;
+  readonly requestId: string;
+}
+
+export function parseDevicePairingResponse(
+  value: unknown,
+): DevicePairingResponse {
+  const envelope = object(value, "response");
+  const record = object(envelope.data, "response.data");
+  const credential = string(record.credential, "response.data.credential");
+  if (!/^kin_device_[A-Za-z0-9_-]{43}$/.test(credential)) {
+    throw new Error("response.data.credential is invalid.");
+  }
+  return {
+    deviceId: identifier(record.deviceId, "response.data.deviceId"),
+    name: boundedString(record.name, "response.data.name", 1, 160),
+    credential,
+    expiresAt: timestamp(record.expiresAt, "response.data.expiresAt"),
+    requestId: identifier(envelope.requestId, "response.requestId"),
+  };
+}
+
+export function parseDeviceHeartbeatResponse(value: unknown): DeviceHeartbeat {
+  const envelope = object(value, "response");
+  const record = object(envelope.data, "response.data");
+  if (record.status !== "ONLINE") {
+    throw new Error("response.data.status is invalid.");
+  }
+  return {
+    deviceId: identifier(record.deviceId, "response.data.deviceId"),
+    status: "ONLINE",
+    lastSeenAt: timestamp(record.lastSeenAt, "response.data.lastSeenAt"),
+    serverTime: timestamp(record.serverTime, "response.data.serverTime"),
+    requestId: identifier(envelope.requestId, "response.requestId"),
+    replayed: boolean(envelope.replayed, "response.replayed"),
+  };
+}
+
+export function parseDeviceEventResponse(value: unknown): DeviceEventResult {
+  const envelope = object(value, "response");
+  const record = object(envelope.data, "response.data");
+  const decision = object(record.decision, "response.data.decision");
+  const ruleId = string(decision.ruleId, "response.data.decision.ruleId");
+  if (!ruleIdPattern.test(ruleId)) {
+    throw new Error("response.data.decision.ruleId is invalid.");
+  }
+  return {
+    eventId: identifier(record.eventId, "response.data.eventId"),
+    deviceId: identifier(record.deviceId, "response.data.deviceId"),
+    kind: validateDeviceEventKind(record.kind),
+    receivedAt: timestamp(record.receivedAt, "response.data.receivedAt"),
+    decision: {
+      id: identifier(decision.id, "response.data.decision.id"),
+      outcome: enumeration(
+        decision.outcome,
+        policyOutcomes,
+        "response.data.decision.outcome",
+      ) as PolicyOutcome,
+      ruleId,
+      policyVersion: positiveInteger(
+        decision.policyVersion,
+        "response.data.decision.policyVersion",
+      ),
+      reason: boundedString(
+        decision.reason,
+        "response.data.decision.reason",
+        1,
+        2_000,
+      ),
+      remediation: nullable(decision.remediation, (candidate) =>
+        boundedString(
+          candidate,
+          "response.data.decision.remediation",
+          0,
+          2_000,
+        ),
+      ),
+    },
+    requestId: identifier(envelope.requestId, "response.requestId"),
+    replayed: boolean(envelope.replayed, "response.replayed"),
+  };
+}
+
 export interface ParsedApiError {
   readonly code: KinemicaApiErrorCode;
   readonly message: string;
@@ -420,5 +510,83 @@ export function validateIdempotencyKey(value: string): void {
     !/^[A-Za-z0-9][A-Za-z0-9._:-]+$/.test(value)
   ) {
     throw new Error("idempotencyKey is invalid.");
+  }
+}
+
+export function validateDeviceCredential(value: string): void {
+  if (!/^kin_device_[A-Za-z0-9_-]{43}$/.test(value)) {
+    throw new Error("credential is invalid.");
+  }
+}
+
+export function validatePairingCode(value: string): string {
+  if (typeof value !== "string") throw new Error("pairingCode is invalid.");
+  const result = value.trim();
+  if (result.length < 16 || result.length > 24) {
+    throw new Error("pairingCode is invalid.");
+  }
+  return result;
+}
+
+export function validateDeviceEventKind(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Z][A-Z0-9_]{2,63}$/.test(value)) {
+    throw new Error("kind is invalid.");
+  }
+  return value;
+}
+
+export function validateDeviceObservedAt(value: string): void {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) ||
+    !Number.isFinite(Date.parse(value))
+  ) {
+    throw new Error("observedAt is invalid.");
+  }
+}
+
+export function validateDeviceConfidence(value: number | undefined): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "number" ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      value > 1)
+  ) {
+    throw new Error("confidence is invalid.");
+  }
+}
+
+export function validateDeviceMetadata(
+  value: Readonly<Record<string, DeviceEventMetadataValue>> | undefined,
+): void {
+  if (value === undefined) return;
+  const candidate: unknown = value;
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate)
+  ) {
+    throw new Error("metadata is invalid.");
+  }
+  const entries = Object.entries(candidate);
+  if (entries.length > 24) throw new Error("metadata is invalid.");
+  for (const [key, item] of entries) {
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(key)) {
+      throw new Error("metadata is invalid.");
+    }
+    if (
+      !(
+        item === null ||
+        typeof item === "boolean" ||
+        (typeof item === "number" && Number.isFinite(item)) ||
+        (typeof item === "string" && item.length <= 256)
+      )
+    ) {
+      throw new Error("metadata is invalid.");
+    }
+  }
+  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 4_096) {
+    throw new Error("metadata is invalid.");
   }
 }
