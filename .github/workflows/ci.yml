@@ -65,6 +65,8 @@ jobs:
           tar -tzf "$TARBALL" >/tmp/kinemica-sdk-package-files.txt
           grep -qx 'package/dist/index.js' /tmp/kinemica-sdk-package-files.txt
           grep -qx 'package/dist/index.d.ts' /tmp/kinemica-sdk-package-files.txt
+          grep -qx 'package/dist/device.js' /tmp/kinemica-sdk-package-files.txt
+          grep -qx 'package/dist/device.d.ts' /tmp/kinemica-sdk-package-files.txt
           grep -qx 'package/README.md' /tmp/kinemica-sdk-package-files.txt
           grep -qx 'package/LICENSE' /tmp/kinemica-sdk-package-files.txt
       - name: Install packed package in a clean project
@@ -78,15 +80,24 @@ jobs:
           npm install "$GITHUB_WORKSPACE/$TARBALL"
           npm install --save-dev typescript@5.9.2
           node --input-type=module <<'JS'
-          import { Kinemica, KinemicaValidationError } from "@kinemica/sdk";
+          import { Kinemica, KinemicaDevice, KinemicaValidationError } from "@kinemica/sdk";
 
           if (typeof Kinemica !== "function") throw new Error("Kinemica export missing");
+          if (typeof KinemicaDevice !== "function") throw new Error("KinemicaDevice export missing");
           const client = new Kinemica({
             apiKey: "package-smoke-key",
             baseUrl: "http://localhost:3000",
             fetch: async () => new Response("{}", { status: 200 }),
           });
           if (!client.work || !client.actions) throw new Error("SDK resources missing");
+          const device = new KinemicaDevice({
+            credential: `kin_device_${"A".repeat(43)}`,
+            baseUrl: "http://localhost:3000",
+            fetch: async () => new Response("{}", { status: 200 }),
+          });
+          if (!device.events || typeof device.heartbeat !== "function") {
+            throw new Error("Device SDK resources missing");
+          }
           let rejected = false;
           try {
             new Kinemica({ apiKey: " " });
@@ -96,15 +107,26 @@ jobs:
           if (!rejected) throw new Error("Validation error export is not functional");
           JS
           cat >consumer.ts <<'TS'
-          import { Kinemica, type KinemicaOptions } from "@kinemica/sdk";
+          import {
+            Kinemica,
+            KinemicaDevice,
+            type KinemicaDeviceOptions,
+            type KinemicaOptions,
+          } from "@kinemica/sdk";
 
           const options: KinemicaOptions = {
             apiKey: "type-smoke-key",
             baseUrl: "http://localhost:3000",
           };
           const client = new Kinemica(options);
+          const deviceOptions: KinemicaDeviceOptions = {
+            credential: `kin_device_${"A".repeat(43)}`,
+            baseUrl: "http://localhost:3000",
+          };
+          const device = new KinemicaDevice(deviceOptions);
           void client.work;
           void client.actions;
+          void device.events;
           TS
           npx tsc --strict --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext consumer.ts
 
@@ -134,4 +156,4 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Import built SDK
-        run: node --input-type=module -e "import('./dist/index.js').then((m) => { if (typeof m.Kinemica !== 'function') throw new Error('Kinemica export missing') })"
+        run: node --input-type=module -e "import('./dist/index.js').then((m) => { if (typeof m.Kinemica !== 'function' || typeof m.KinemicaDevice !== 'function') throw new Error('SDK export missing') })"

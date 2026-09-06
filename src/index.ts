@@ -1,5 +1,10 @@
 export { Kinemica, type KinemicaOptions } from "./client.js";
 export {
+  KinemicaDevice,
+  type KinemicaDeviceOptions,
+  type KinemicaDevicePairOptions,
+} from "./device.js";
+export {
   KinemicaApiError,
   KinemicaAuthenticationError,
   KinemicaConflictError,
@@ -18,6 +23,11 @@ export type {
   ApprovalStatus,
   AuthorizationDecision,
   AuthorizeActionParams,
+  DeviceEventMetadataValue,
+  DeviceEventResult,
+  DeviceHeartbeat,
+  DeviceHeartbeatParams,
+  DevicePolicyDecision,
   EvidenceVerificationOutcome,
   ExceptionStatus,
   KinemicaApiErrorCode,
@@ -28,6 +38,7 @@ export type {
   RiskLevel,
   TaskEvidenceSummary,
   TaskStatus,
+  SubmitDeviceEventParams,
   Work,
   WorkCompletion,
   WorkException,

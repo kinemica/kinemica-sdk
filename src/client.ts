@@ -28,12 +28,19 @@ export interface KinemicaOptions {
   readonly fetch?: typeof globalThis.fetch;
 }
 
+export interface KinemicaTransportOptions {
+  readonly baseUrl?: string;
+  readonly timeoutMs?: number;
+  readonly fetch?: typeof globalThis.fetch;
+}
+
 interface HttpRequest {
   readonly method: "GET" | "POST";
   readonly path: string;
   readonly body?: unknown;
   readonly headers?: Readonly<Record<string, string>>;
   readonly options?: RequestOptions;
+  readonly sensitiveValues?: readonly string[];
 }
 
 export interface KinemicaHttpClient {
@@ -111,14 +118,14 @@ function errorClass(
   return KinemicaApiError;
 }
 
-class HttpClient implements KinemicaHttpClient {
-  private readonly apiKey: string;
+export class HttpClient implements KinemicaHttpClient {
+  readonly #credential: string | undefined;
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetch: typeof globalThis.fetch;
 
-  constructor(options: KinemicaOptions) {
-    this.apiKey = validateApiKey(options.apiKey);
+  constructor(options: KinemicaTransportOptions, credential?: string) {
+    this.#credential = credential;
     this.baseUrl = validateBaseUrl(options.baseUrl);
     this.timeoutMs = validateTimeout(options.timeoutMs);
     if (options.fetch !== undefined && typeof options.fetch !== "function") {
@@ -151,7 +158,9 @@ class HttpClient implements KinemicaHttpClient {
       const response = await this.fetch(`${this.baseUrl}${request.path}`, {
         method: request.method,
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          ...(this.#credential
+            ? { Authorization: `Bearer ${this.#credential}` }
+            : {}),
           ...(request.body === undefined
             ? {}
             : { "Content-Type": "application/json" }),
@@ -174,7 +183,14 @@ class HttpClient implements KinemicaHttpClient {
           ...(requestId ? { requestId } : {}),
         });
       }
-      if (!response.ok) this.throwApiError(response.status, decoded, requestId);
+      if (!response.ok) {
+        this.throwApiError(
+          response.status,
+          decoded,
+          requestId,
+          request.sensitiveValues,
+        );
+      }
       return decoded;
     } catch (error) {
       if (error instanceof KinemicaApiError) throw error;
@@ -199,12 +215,23 @@ class HttpClient implements KinemicaHttpClient {
     status: number,
     body: unknown,
     headerRequestId: string | undefined,
+    requestSensitiveValues: readonly string[] | undefined,
   ): never {
     const parsed = parseApiError(body);
     const code = parsed?.code ?? "internal_error";
     const ErrorType = errorClass(code, status);
+    const sensitiveValues = [
+      ...(this.#credential ? [this.#credential] : []),
+      ...(requestSensitiveValues ?? []),
+    ];
     const safeMessage = parsed?.message
-      ? parsed.message.replaceAll(this.apiKey, "[REDACTED]")
+      ? sensitiveValues.reduce(
+          (message, sensitiveValue) =>
+            sensitiveValue
+              ? message.replaceAll(sensitiveValue, "[REDACTED]")
+              : message,
+          parsed.message,
+        )
       : `Kinemica request failed with HTTP ${status}.`;
     const requestId = parsed?.requestId ?? headerRequestId;
     const options: KinemicaErrorOptions = {
@@ -222,7 +249,7 @@ export class Kinemica {
   readonly actions: ActionsResource;
 
   constructor(options: KinemicaOptions) {
-    const client = new HttpClient(options);
+    const client = new HttpClient(options, validateApiKey(options.apiKey));
     this.work = new WorkResource(client);
     this.actions = new ActionsResource(client);
   }

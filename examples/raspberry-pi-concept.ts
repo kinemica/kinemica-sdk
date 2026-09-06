@@ -1,28 +1,35 @@
-import { Kinemica } from "../src/index.js";
+import { randomUUID } from "node:crypto";
+
+import { KinemicaDevice } from "../src/index.js";
+
+export async function pairOnce(
+  pairingCode: string,
+  saveCredential: (credential: string) => Promise<void>,
+): Promise<void> {
+  const device = await KinemicaDevice.pair(pairingCode);
+  await saveCredential(device.credential);
+}
 
 // Camera/OpenCV/Picamera software detects an event before this function runs.
-// The SDK does not read cameras and does not control hardware.
-export async function checkAssignmentAfterCameraEvent(
-  kinemica: Kinemica,
-  workId: string,
-  taskId: string,
-  workerId: string,
+// The SDK does not read cameras, stream video or control hardware.
+export async function reportPersonDetected(
+  deviceCredential: string,
+  confidence: number,
 ): Promise<void> {
-  const work = await kinemica.work.retrieve(workId);
-  const task = work.tasks.find((candidate) => candidate.id === taskId);
-  if (!task)
-    throw new Error(
-      "The camera event does not reference a task in this work record.",
-    );
+  const device = new KinemicaDevice({ credential: deviceCredential });
 
-  const decision = await kinemica.actions.authorize({
-    workId: work.id,
-    taskId: task.id,
-    workerId,
-    action: "assign_worker",
-    idempotencyKey: `camera-event:${work.id}:${task.id}`,
+  await device.heartbeat({
+    idempotencyKey: `heartbeat:${randomUUID()}`,
   });
 
-  // ALLOW means Kinemica permitted this candidate assignment. It does not dispatch a worker.
-  console.log(decision.outcome, decision.ruleId, decision.reason);
+  const event = await device.events.submit({
+    kind: "PERSON_DETECTED",
+    observedAt: new Date().toISOString(),
+    confidence,
+    metadata: { zone: "loading_bay" },
+    idempotencyKey: `person-detected:${randomUUID()}`,
+  });
+
+  // This is Kinemica's server-side policy result, not a hardware command.
+  console.log(event.decision.outcome, event.decision.ruleId);
 }

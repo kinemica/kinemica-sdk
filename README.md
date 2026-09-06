@@ -2,7 +2,7 @@
 
 Kinemica is a work-execution system for physical jobs performed by AI agents, people and machines. `@kinemica/sdk` provides a typed interface to Kinemica's Developer API while Kinemica retains server-side authority over permissions, policy and audit.
 
-Version `0.1.0` targets server-side Node.js and exposes the two operations in the live Production Developer API. Kinemica remains the server-side authority for identity, workspace scope, permissions, deterministic policy, audit and persistence.
+Version `0.2.0` targets server-side Node.js 22 or newer. It preserves the v0.1 Developer API operations and adds the three live Connected Devices operations: one-time pairing, heartbeat and bounded event submission. Kinemica remains the server-side authority for identity, workspace scope, permissions, deterministic policy, audit and persistence.
 
 ## Installation
 
@@ -81,6 +81,52 @@ An `Idempotency-Key` is required for every authorization. Reusing it with the ex
 
 Both methods accept `{ signal }` as a second argument for caller cancellation. The default timeout is 10 seconds and can be configured from 1 to 300,000 milliseconds.
 
+## Connected devices
+
+An OWNER first registers the device in Kinemica and gives the node its short-lived, one-time pairing code. The node exchanges that code for one device-scoped credential:
+
+```ts
+import { KinemicaDevice } from "@kinemica/sdk";
+
+const device = await KinemicaDevice.pair(
+  process.env.KINEMICA_DEVICE_PAIRING_CODE!,
+);
+
+// Persist once in the device's protected secret store; never log this value.
+await saveDeviceCredential(device.credential);
+```
+
+On normal startup, restore only that device credential. Heartbeats and events require explicit idempotency keys and the SDK makes exactly one request:
+
+```ts
+import { randomUUID } from "node:crypto";
+import { KinemicaDevice } from "@kinemica/sdk";
+
+const device = new KinemicaDevice({
+  credential: process.env.KINEMICA_DEVICE_CREDENTIAL!,
+});
+
+await device.heartbeat({
+  idempotencyKey: `heartbeat:${randomUUID()}`,
+});
+
+const event = await device.events.submit({
+  kind: "PERSON_DETECTED",
+  observedAt: new Date().toISOString(),
+  confidence: 0.94,
+  metadata: { zone: "loading_bay" },
+  idempotencyKey: `person-detected:${randomUUID()}`,
+});
+
+console.log(event.decision.outcome, event.decision.reason);
+```
+
+The server derives the device and workspace from the device credential. Event callers cannot select a workspace, task, worker, policy rule or decision. `ALLOW`, `BLOCK` and `REQUIRE_APPROVAL` are Kinemica’s recorded domain decisions; submitting an event does not dispatch or control hardware.
+
+Exact replays of a heartbeat or event idempotency key return `replayed: true`; reusing a key with a changed event returns `KinemicaConflictError`. Because a network failure can hide whether the server committed a request, the SDK never retries automatically. The caller may deliberately retry the same request with the same idempotency key.
+
+Pairing codes and device credentials are secrets. Pairing codes expire after ten minutes and are single-use. Device credentials can be revoked by a workspace OWNER. Never put a Supabase key, service-role credential, user session, or project Developer API key on a device.
+
 ## Errors
 
 API failures use a small hierarchy rooted at `KinemicaError`:
@@ -111,11 +157,12 @@ Kinemica Developer API
 bounded work / policy decision / audit
 ```
 
-The SDK does not read a camera, include OpenCV or Picamera, control a robot, or implement policy. Raspberry Pi software can retrieve relevant Kinemica work and request authorization for a candidate assignment. See [`examples/raspberry-pi-concept.ts`](examples/raspberry-pi-concept.ts).
+The SDK does not read a camera, include OpenCV or Picamera, stream video, control a robot, or implement policy. Raspberry Pi software can submit a bounded observation after its own camera software detects one. See [`examples/raspberry-pi-concept.ts`](examples/raspberry-pi-concept.ts).
 
 ## Current limitations
 
-- Only `work.retrieve()` and assignment-focused `actions.authorize()` exist.
+- The project client remains limited to `work.retrieve()` and assignment-focused `actions.authorize()`.
+- The device client is limited to one-time pairing, heartbeat and bounded event submission.
 - There is no work creation, evidence submission, dispatch, approval recording, robot control, browser client, CLI, webhook or retry framework.
 - No public physical-mutation API exists yet; authorization evaluates and records policy but does not assign or dispatch.
 - Kinemica remains a prototype and is not approved for live safety-critical work.
