@@ -38,6 +38,7 @@ interface HttpRequest {
   readonly method: "GET" | "POST";
   readonly path: string;
   readonly body?: unknown;
+  readonly rawBody?: Uint8Array;
   readonly headers?: Readonly<Record<string, string>>;
   readonly options?: RequestOptions;
   readonly sensitiveValues?: readonly string[];
@@ -166,9 +167,11 @@ export class HttpClient implements KinemicaHttpClient {
             : { "Content-Type": "application/json" }),
           ...request.headers,
         },
-        ...(request.body === undefined
-          ? {}
-          : { body: JSON.stringify(request.body) }),
+        ...(request.rawBody !== undefined
+          ? { body: request.rawBody as BodyInit }
+          : request.body === undefined
+            ? {}
+            : { body: JSON.stringify(request.body) }),
         redirect: "manual",
         signal: controller.signal,
       });

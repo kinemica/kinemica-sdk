@@ -2,7 +2,7 @@
 
 Kinemica is a work-execution system for physical jobs performed by AI agents, people and machines. `@kinemica/sdk` provides a typed interface to Kinemica's Developer API while Kinemica retains server-side authority over permissions, policy and audit.
 
-Version `0.2.0` targets server-side Node.js 22 or newer. It preserves the v0.1 Developer API operations and adds the three live Connected Devices operations: one-time pairing, heartbeat and bounded event submission. Kinemica remains the server-side authority for identity, workspace scope, permissions, deterministic policy, audit and persistence.
+Version `0.3.0` targets server-side Node.js 22 or newer. It preserves the v0.1 and v0.2 APIs and adds bounded image evidence for connected devices. Kinemica remains the server-side authority for identity, workspace scope, permissions, deterministic policy, audit and persistence.
 
 ## Installation
 
@@ -96,7 +96,7 @@ const device = await KinemicaDevice.pair(
 await saveDeviceCredential(device.credential);
 ```
 
-On normal startup, restore only that device credential. Heartbeats and events require explicit idempotency keys and the SDK makes exactly one request:
+On normal startup, restore only that device credential. Heartbeats, evidence and events require explicit idempotency keys and the SDK makes exactly one request:
 
 ```ts
 import { randomUUID } from "node:crypto";
@@ -110,20 +110,34 @@ await device.heartbeat({
   idempotencyKey: `heartbeat:${randomUUID()}`,
 });
 
+// `snapshot` is a Uint8Array or Node.js Buffer produced by device software.
+const evidence = await device.evidence.upload({
+  bytes: snapshot,
+  mediaType: "image/jpeg",
+  observedAt: new Date().toISOString(),
+  originalName: "loading-bay.jpg",
+  idempotencyKey: `snapshot:${randomUUID()}`,
+});
+
 const event = await device.events.submit({
   kind: "PERSON_DETECTED",
   observedAt: new Date().toISOString(),
   confidence: 0.94,
+  evidenceIds: [evidence.evidenceId],
   metadata: { zone: "loading_bay" },
   idempotencyKey: `person-detected:${randomUUID()}`,
 });
 
-console.log(event.decision.outcome, event.decision.reason);
+console.log(event.work.status, event.work.jobId);
 ```
 
-The server derives the device and workspace from the device credential. Event callers cannot select a workspace, task, worker, policy rule or decision. `ALLOW`, `BLOCK` and `REQUIRE_APPROVAL` are Kinemica’s recorded domain decisions; submitting an event does not dispatch or control hardware.
+The evidence endpoint accepts only valid JPEG, PNG or WebP images from 1 byte through 3 MB, with dimensions no larger than 4096 × 4096. It returns immutable server metadata including the evidence ID, content digest, dimensions and timestamps. The platform does not accept paths or arbitrary evidence metadata.
 
-Exact replays of a heartbeat or event idempotency key return `replayed: true`; reusing a key with a changed event returns `KinemicaConflictError`. Because a network failure can hide whether the server committed a request, the SDK never retries automatically. The caller may deliberately retry the same request with the same idempotency key.
+An event can reference at most four evidence IDs. The server verifies that every ID belongs to the exact authenticated device and workspace. Evidence-backed events configured for review return an episode and work status; ordinary v0.2 policy events still return their `decision` unchanged. The SDK never manufactures a policy result.
+
+The server derives the device and workspace from the device credential. Callers cannot select a workspace, task, worker, policy rule or decision. `ALLOW`, `BLOCK` and `REQUIRE_APPROVAL` are Kinemica’s recorded domain decisions; submitting evidence or an event does not dispatch or control hardware.
+
+Exact replays of heartbeat, evidence or event idempotency keys return `replayed: true`; reusing a key with changed content returns `KinemicaConflictError`. Because a network failure can hide whether the server committed a request, the SDK never retries automatically. The caller may deliberately retry the exact same request with the same idempotency key.
 
 Pairing codes and device credentials are secrets. Pairing codes expire after ten minutes and are single-use. Device credentials can be revoked by a workspace OWNER. Never put a Supabase key, service-role credential, user session, or project Developer API key on a device.
 
@@ -154,7 +168,7 @@ camera software detects an event
     ↓
 Kinemica Developer API
     ↓
-bounded work / policy decision / audit
+bounded evidence / review work / policy decision / audit
 ```
 
 The SDK does not read a camera, include OpenCV or Picamera, stream video, control a robot, or implement policy. Raspberry Pi software can submit a bounded observation after its own camera software detects one. See [`examples/raspberry-pi-concept.ts`](examples/raspberry-pi-concept.ts).
@@ -162,8 +176,8 @@ The SDK does not read a camera, include OpenCV or Picamera, stream video, contro
 ## Current limitations
 
 - The project client remains limited to `work.retrieve()` and assignment-focused `actions.authorize()`.
-- The device client is limited to one-time pairing, heartbeat and bounded event submission.
-- There is no work creation, evidence submission, dispatch, approval recording, robot control, browser client, CLI, webhook or retry framework.
+- The device client is limited to one-time pairing, heartbeat, bounded image evidence and bounded event submission.
+- There is no work creation, generic file upload, dispatch, approval recording, robot control, browser client, CLI, webhook or retry framework.
 - No public physical-mutation API exists yet; authorization evaluates and records policy but does not assign or dispatch.
 - Kinemica remains a prototype and is not approved for live safety-critical work.
 

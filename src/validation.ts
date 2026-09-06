@@ -1,7 +1,9 @@
 import type {
   ApprovalStatus,
   AuthorizationDecision,
-  DeviceEventResult,
+  DeviceEventSubmissionResult,
+  DeviceEvidenceMediaType,
+  DeviceEvidenceUpload,
   DeviceHeartbeat,
   DeviceEventMetadataValue,
   EvidenceVerificationOutcome,
@@ -58,9 +60,20 @@ const apiErrorCodes = [
   "forbidden",
   "not_found",
   "conflict",
+  "device_event_unconfigured",
   "rate_limited",
   "service_unavailable",
   "internal_error",
+] as const;
+const deviceEvidenceMediaTypes = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+const deviceReviewWorkStatuses = [
+  "AWAITING_HUMAN_DECISION",
+  "EXISTING_EPISODE",
+  "QUEUED",
 ] as const;
 
 type JsonObject = Record<string, unknown>;
@@ -125,6 +138,16 @@ function integer(value: unknown, label: string): number {
 function positiveInteger(value: unknown, label: string): number {
   const result = integer(value, label);
   if (result === 0) throw new Error(`${label} must be positive.`);
+  return result;
+}
+
+function boundedPositiveInteger(
+  value: unknown,
+  label: string,
+  maximum: number,
+): number {
+  const result = positiveInteger(value, label);
+  if (result > maximum) throw new Error(`${label} is too large.`);
   return result;
 }
 
@@ -404,19 +427,43 @@ export function parseDeviceHeartbeatResponse(value: unknown): DeviceHeartbeat {
   };
 }
 
-export function parseDeviceEventResponse(value: unknown): DeviceEventResult {
+export function parseDeviceEventResponse(
+  value: unknown,
+): DeviceEventSubmissionResult {
   const envelope = object(value, "response");
   const record = object(envelope.data, "response.data");
+  const shared = {
+    eventId: identifier(record.eventId, "response.data.eventId"),
+    deviceId: identifier(record.deviceId, "response.data.deviceId"),
+    kind: validateDeviceEventKind(record.kind),
+    receivedAt: timestamp(record.receivedAt, "response.data.receivedAt"),
+    requestId: identifier(envelope.requestId, "response.requestId"),
+    replayed: boolean(envelope.replayed, "response.replayed"),
+  };
+  if (record.decision === undefined) {
+    const work = object(record.work, "response.data.work");
+    return {
+      ...shared,
+      episodeId: identifier(record.episodeId, "response.data.episodeId"),
+      work: {
+        status: enumeration(
+          work.status,
+          deviceReviewWorkStatuses,
+          "response.data.work.status",
+        ),
+        jobId: nullable(work.jobId, (candidate) =>
+          identifier(candidate, "response.data.work.jobId"),
+        ),
+      },
+    };
+  }
   const decision = object(record.decision, "response.data.decision");
   const ruleId = string(decision.ruleId, "response.data.decision.ruleId");
   if (!ruleIdPattern.test(ruleId)) {
     throw new Error("response.data.decision.ruleId is invalid.");
   }
   return {
-    eventId: identifier(record.eventId, "response.data.eventId"),
-    deviceId: identifier(record.deviceId, "response.data.deviceId"),
-    kind: validateDeviceEventKind(record.kind),
-    receivedAt: timestamp(record.receivedAt, "response.data.receivedAt"),
+    ...shared,
     decision: {
       id: identifier(decision.id, "response.data.decision.id"),
       outcome: enumeration(
@@ -444,6 +491,40 @@ export function parseDeviceEventResponse(value: unknown): DeviceEventResult {
         ),
       ),
     },
+  };
+}
+
+export function parseDeviceEvidenceResponse(
+  value: unknown,
+): DeviceEvidenceUpload {
+  const envelope = object(value, "response");
+  const record = object(envelope.data, "response.data");
+  const digest = string(record.contentDigest, "response.data.contentDigest");
+  if (!/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error("response.data.contentDigest is invalid.");
+  }
+  return {
+    evidenceId: identifier(record.evidenceId, "response.data.evidenceId"),
+    deviceId: identifier(record.deviceId, "response.data.deviceId"),
+    mediaType: enumeration(
+      record.mediaType,
+      deviceEvidenceMediaTypes,
+      "response.data.mediaType",
+    ) as DeviceEvidenceMediaType,
+    sizeBytes: boundedPositiveInteger(
+      record.sizeBytes,
+      "response.data.sizeBytes",
+      3_000_000,
+    ),
+    width: boundedPositiveInteger(record.width, "response.data.width", 4_096),
+    height: boundedPositiveInteger(
+      record.height,
+      "response.data.height",
+      4_096,
+    ),
+    contentDigest: digest,
+    observedAt: timestamp(record.observedAt, "response.data.observedAt"),
+    uploadedAt: timestamp(record.uploadedAt, "response.data.uploadedAt"),
     requestId: identifier(envelope.requestId, "response.requestId"),
     replayed: boolean(envelope.replayed, "response.replayed"),
   };
@@ -538,10 +619,57 @@ export function validateDeviceEventKind(value: unknown): string {
 export function validateDeviceObservedAt(value: string): void {
   if (
     typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      value,
+    ) ||
     !Number.isFinite(Date.parse(value))
   ) {
     throw new Error("observedAt is invalid.");
+  }
+}
+
+export function validateDeviceEvidenceIds(
+  value: readonly string[] | undefined,
+): void {
+  if (value === undefined) return;
+  const candidate: unknown = value;
+  if (!Array.isArray(candidate) || candidate.length > 4) {
+    throw new Error("evidenceIds is invalid.");
+  }
+  for (const evidenceId of candidate as unknown[]) {
+    if (typeof evidenceId !== "string") {
+      throw new Error("evidenceIds is invalid.");
+    }
+    validateIdentifier(evidenceId, "evidenceId");
+  }
+}
+
+export function validateDeviceEvidenceBytes(value: Uint8Array): void {
+  if (
+    !(value instanceof Uint8Array) ||
+    value.byteLength < 1 ||
+    value.byteLength > 3_000_000
+  ) {
+    throw new Error("bytes is invalid.");
+  }
+}
+
+export function validateDeviceEvidenceMediaType(value: string): void {
+  if (!deviceEvidenceMediaTypes.includes(value as DeviceEvidenceMediaType)) {
+    throw new Error("mediaType is invalid.");
+  }
+}
+
+export function validateDeviceEvidenceOriginalName(
+  value: string | undefined,
+): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" ||
+      value.trim().length < 1 ||
+      value.trim().length > 255)
+  ) {
+    throw new Error("originalName is invalid.");
   }
 }
 

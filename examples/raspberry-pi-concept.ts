@@ -15,6 +15,7 @@ export async function pairOnce(
 export async function reportPersonDetected(
   deviceCredential: string,
   confidence: number,
+  snapshot: Uint8Array,
 ): Promise<void> {
   const device = new KinemicaDevice({ credential: deviceCredential });
 
@@ -22,14 +23,24 @@ export async function reportPersonDetected(
     idempotencyKey: `heartbeat:${randomUUID()}`,
   });
 
+  const observedAt = new Date().toISOString();
+  const evidence = await device.evidence.upload({
+    bytes: snapshot,
+    mediaType: "image/jpeg",
+    observedAt,
+    originalName: "person-detected.jpg",
+    idempotencyKey: `snapshot:${randomUUID()}`,
+  });
+
   const event = await device.events.submit({
     kind: "PERSON_DETECTED",
-    observedAt: new Date().toISOString(),
+    observedAt,
     confidence,
+    evidenceIds: [evidence.evidenceId],
     metadata: { zone: "loading_bay" },
     idempotencyKey: `person-detected:${randomUUID()}`,
   });
 
-  // This is Kinemica's server-side policy result, not a hardware command.
-  console.log(event.decision.outcome, event.decision.ruleId);
+  // Kinemica returns server-owned review work, not a hardware command.
+  console.log(event.work.status, event.work.jobId);
 }
