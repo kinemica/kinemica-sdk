@@ -36,7 +36,7 @@ function requestJson(init: RequestInit | undefined): unknown {
   return JSON.parse(init.body) as unknown;
 }
 
-function pairingResponse(): unknown {
+function pairingResponse() {
   return {
     data: {
       deviceId: "device_camera_001",
@@ -48,7 +48,7 @@ function pairingResponse(): unknown {
   };
 }
 
-function heartbeatResponse(replayed = false): unknown {
+function heartbeatResponse(replayed = false) {
   return {
     data: {
       deviceId: "device_camera_001",
@@ -64,7 +64,7 @@ function heartbeatResponse(replayed = false): unknown {
 function eventResponse(
   outcome: "ALLOW" | "BLOCK" | "REQUIRE_APPROVAL",
   replayed = false,
-): unknown {
+) {
   return {
     data: {
       eventId: "device_event_001",
@@ -85,7 +85,7 @@ function eventResponse(
   };
 }
 
-function evidenceResponse(replayed = false): unknown {
+function evidenceResponse(replayed = false) {
   return {
     data: {
       evidenceId: "device_evidence_001",
@@ -103,7 +103,7 @@ function evidenceResponse(replayed = false): unknown {
   };
 }
 
-function reviewEventResponse(): unknown {
+function reviewEventResponse() {
   return {
     data: {
       eventId: "device_event_review_001",
@@ -255,7 +255,7 @@ describe("KinemicaDevice evidence", () => {
       expect(headers.get("idempotency-key")).toBe("evidence-camera-0001");
       expect(headers.get("x-kinemica-observed-at")).toBe(now);
       expect(headers.get("x-kinemica-original-name")).toBe("snapshot.png");
-      expect(init?.body).toBe(bytes);
+      expect(init?.body).toEqual(new Uint8Array(bytes));
       return jsonResponse(evidenceResponse(), 201);
     });
     const device = new KinemicaDevice({ credential, baseUrl, fetch });
@@ -552,4 +552,221 @@ describe("KinemicaDevice events", () => {
     expect(String(error)).not.toContain(credential);
     expect(JSON.stringify(echoedDevice)).not.toContain(credential);
   });
+});
+
+describe("device response and payload audit", () => {
+  const upload = {
+    bytes: new Uint8Array([1, 2, 3]),
+    mediaType: "image/png" as const,
+    observedAt: now,
+    idempotencyKey: "audit-evidence-001",
+  };
+  const event = {
+    kind: "PERSON_DETECTED",
+    observedAt: now,
+    idempotencyKey: "audit-event-001",
+  };
+
+  it.each([
+    { mediaType: "image/gif" },
+    { sizeBytes: 3_000_001 },
+    { width: 0 },
+    { height: 4097 },
+    { contentDigest: "not-a-digest" },
+    { observedAt: "2026-99-99T00:00:00Z" },
+  ])("rejects incompatible evidence metadata %j", async (change) => {
+    const body = evidenceResponse();
+    const device = new KinemicaDevice({
+      credential,
+      fetch: async () =>
+        jsonResponse({ ...body, data: { ...body.data, ...change } }),
+    });
+    await expect(device.evidence.upload(upload)).rejects.toMatchObject({
+      name: "KinemicaApiError",
+      status: 200,
+      requestId: body.requestId,
+    });
+  });
+
+  it("retains explicit access to a paired credential without reflecting it in public display fields", async () => {
+    const body = pairingResponse();
+    const device = await KinemicaDevice.pair("2345-6789-ABCD-EFGH", {
+      fetch: async () =>
+        jsonResponse({
+          ...body,
+          data: { ...body.data, name: `Echo ${credential}` },
+        }),
+    });
+    expect(device.credential).toBe(credential);
+    expect(device.name).toBe("Echo [REDACTED]");
+    expect(JSON.stringify(device)).not.toContain(credential);
+  });
+
+  it("redacts compact pairing codes from error details", async () => {
+    const code = "2345-6789-ABCD-EFGH";
+    const error: unknown = await KinemicaDevice.pair(code, {
+      fetch: async () =>
+        jsonResponse(
+          {
+            error: {
+              code: "validation",
+              message: "Invalid pairing",
+              requestId: "request_pair_error",
+              details: [
+                { field: "pairingCode", message: code.replaceAll("-", "") },
+              ],
+            },
+          },
+          400,
+        ),
+    }).catch((value: unknown) => value);
+    expect(JSON.stringify(error)).not.toContain(code.replaceAll("-", ""));
+  });
+
+  it.each(["policy-with-evidence", "review-without-evidence", "ambiguous"])(
+    "rejects a response inconsistent with the overload: %s",
+    async (variant) => {
+      const body =
+        variant === "review-without-evidence"
+          ? reviewEventResponse()
+          : variant === "ambiguous"
+            ? {
+                ...eventResponse("ALLOW"),
+                data: {
+                  ...eventResponse("ALLOW").data,
+                  ...reviewEventResponse().data,
+                },
+              }
+            : eventResponse("ALLOW");
+      const device = new KinemicaDevice({
+        credential,
+        fetch: async () => jsonResponse(body),
+      });
+      await expect(
+        device.events.submit({
+          ...event,
+          ...(variant === "review-without-evidence"
+            ? {}
+            : { evidenceIds: ["evidence_123"] }),
+        }),
+      ).rejects.toBeInstanceOf(KinemicaApiError);
+    },
+  );
+
+  it("ignores additive fields while rejecting unknown policy outcomes", async () => {
+    const body = eventResponse("ALLOW");
+    const device = new KinemicaDevice({
+      credential,
+      fetch: async () =>
+        jsonResponse({
+          ...body,
+          extra: true,
+          data: { ...body.data, internalFutureField: "discard" },
+        }),
+    });
+    const result = await device.events.submit(event);
+    expect(result.decision.outcome).toBe("ALLOW");
+    expect(result).not.toHaveProperty("internalFutureField");
+    const unknown = new KinemicaDevice({
+      credential,
+      fetch: async () =>
+        jsonResponse({
+          ...body,
+          data: {
+            ...body.data,
+            decision: { ...body.data.decision, outcome: "AUTOMATIC_SUCCESS" },
+          },
+        }),
+    });
+    await expect(unknown.events.submit(event)).rejects.toBeInstanceOf(
+      KinemicaApiError,
+    );
+  });
+
+  it("copies only the upload view before a custom transport can defer reading", async () => {
+    const bytes = Buffer.from([99, 1, 2, 3, 88]).subarray(1, 4);
+    const fetch = mockFetch(async (_input, init) => {
+      await Promise.resolve();
+      expect(new Uint8Array(init?.body as Uint8Array)).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
+      return jsonResponse(evidenceResponse());
+    });
+    const device = new KinemicaDevice({ credential, fetch });
+    const pending = device.evidence.upload({ ...upload, bytes });
+    bytes.fill(0);
+    await expect(pending).resolves.toHaveProperty("evidenceId");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the expected response variant tied to the submitted event", async () => {
+    const evidenceIds = ["evidence_123"];
+    const device = new KinemicaDevice({
+      credential,
+      fetch: async () => jsonResponse(reviewEventResponse()),
+    });
+    const pending = device.events.submit({ ...event, evidenceIds });
+    evidenceIds.length = 0;
+    await expect(pending).resolves.toHaveProperty("work");
+  });
+
+  it.each(["bad\r\nheader.png", "bad\0name.png", "camera-📷.png"])(
+    "rejects an unrepresentable HTTP filename: %j",
+    async (originalName) => {
+      const fetch = mockFetch(async () => jsonResponse(evidenceResponse()));
+      await expect(
+        new KinemicaDevice({ credential, fetch }).evidence.upload({
+          ...upload,
+          originalName,
+        }),
+      ).rejects.toBeInstanceOf(KinemicaValidationError);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves evidence replay and maps conflicts with one request per invocation", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse(evidenceResponse(true)))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: {
+              code: "conflict",
+              message: "Different request",
+              requestId: "request_conflict_123",
+            },
+          },
+          409,
+        ),
+      );
+    const device = new KinemicaDevice({ credential, fetch });
+    await expect(device.evidence.upload(upload)).resolves.toMatchObject({
+      evidenceId: "device_evidence_001",
+      replayed: true,
+    });
+    await expect(
+      device.evidence.upload({ ...upload, bytes: new Uint8Array([2]) }),
+    ).rejects.toBeInstanceOf(KinemicaConflictError);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { bytes: new Uint8Array() },
+    { storagePath: "some/foreign/object.png" },
+    { workspaceId: "workspace_foreign" },
+    { metadata: { policy: "ALLOW" } },
+  ])(
+    "rejects invalid or authority-bearing evidence input %j",
+    async (change) => {
+      const fetch = mockFetch(async () => jsonResponse(evidenceResponse()));
+      await expect(
+        new KinemicaDevice({ credential, fetch }).evidence.upload({
+          ...upload,
+          ...change,
+        }),
+      ).rejects.toBeInstanceOf(KinemicaValidationError);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -2,7 +2,7 @@ import {
   Kinemica,
   KinemicaApiError,
   type AuthorizationDecision,
-} from "../src/index.js";
+} from "@kinemica/sdk";
 
 const apiKey = process.env.KINEMICA_API_KEY;
 

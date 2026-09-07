@@ -1,4 +1,5 @@
-import { KinemicaApiError, KinemicaValidationError } from "./errors.js";
+import { KinemicaValidationError } from "./errors.js";
+import { parseResponse } from "./response.js";
 import type { KinemicaHttpClient } from "./client.js";
 import type {
   AuthorizationDecision,
@@ -42,12 +43,10 @@ export class ActionsResource {
       },
       ...(options ? { options } : {}),
     });
-    try {
-      return parseAuthorizationResponse(response);
-    } catch {
-      throw new KinemicaApiError(
-        "Kinemica returned an incompatible authorization response.",
-      );
-    }
+    return parseResponse(
+      response,
+      parseAuthorizationResponse,
+      "Kinemica returned an incompatible authorization response.",
+    );
   }
 }
