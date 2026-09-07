@@ -7,6 +7,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "paths": { "@kinemica/sdk": ["./src/index.ts"] },
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
@@ -23,6 +24,7 @@
     "src/**/*.ts",
     "examples/**/*.ts",
     "tests/**/*.ts",
+    "tests/**/*.mts",
     "eslint.config.js"
   ],
   "exclude": ["dist", "node_modules"]

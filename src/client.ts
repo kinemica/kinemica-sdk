@@ -16,6 +16,12 @@ import { ActionsResource } from "./actions.js";
 import { parseApiError } from "./validation.js";
 import { WorkResource } from "./work.js";
 import type { KinemicaApiErrorCode, RequestOptions } from "./types.js";
+import {
+  redactSecrets,
+  rememberResponse,
+  safeRequestId,
+  safeDiagnostic,
+} from "./response.js";
 
 const defaultTimeoutMs = 10_000;
 const maximumTimeoutMs = 300_000;
@@ -52,10 +58,12 @@ function validateApiKey(apiKey: string): string {
   if (
     typeof apiKey !== "string" ||
     apiKey.trim().length === 0 ||
-    /\s/.test(apiKey)
+    !/^[\x21-\x7e]+$/.test(apiKey) ||
+    apiKey.startsWith("kin_device_") ||
+    apiKey.startsWith("sb_secret_")
   ) {
     throw new KinemicaValidationError(
-      "apiKey must be a non-empty credential without whitespace.",
+      "apiKey must be a Developer API credential containing visible ASCII characters.",
     );
   }
   return apiKey;
@@ -89,7 +97,7 @@ function validateBaseUrl(baseUrl: string | undefined): string {
       "baseUrl must use HTTPS except for explicit local use.",
     );
   }
-  return url.toString().replace(/\/$/, "");
+  return url.toString().replace(/\/+$/, "");
 }
 
 function validateTimeout(timeoutMs: number | undefined): number {
@@ -143,20 +151,59 @@ export class HttpClient implements KinemicaHttpClient {
   }
 
   async request(request: HttpRequest): Promise<unknown> {
-    const controller = new AbortController();
-    const timeoutReason = Symbol("kinemica-timeout");
-    const callerAbortReason = Symbol("kinemica-caller-abort");
-    const timeout = setTimeout(() => {
-      controller.abort(timeoutReason);
-    }, this.timeoutMs);
     const callerSignal = request.options?.signal;
-    const abortFromCaller = (): void => controller.abort(callerAbortReason);
-    if (callerSignal?.aborted) controller.abort(callerAbortReason);
-    else
+    if (callerSignal?.aborted) {
+      throw new KinemicaRequestAbortedError(
+        "Kinemica request was aborted by the caller.",
+      );
+    }
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let abortFromCaller = (): void => {
+      /* assigned synchronously by Promise executor */
+    };
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      const abort = (error: KinemicaConnectionError): void => {
+        if (controller.signal.aborted) return;
+        // Settle cancellation before a Fetch implementation rejects during abort.
+        reject(error);
+        controller.abort();
+      };
+      timeout = setTimeout(
+        () =>
+          abort(
+            new KinemicaTimeoutError(
+              `Kinemica request timed out after ${this.timeoutMs}ms.`,
+            ),
+          ),
+        this.timeoutMs,
+      );
+      abortFromCaller = () =>
+        abort(
+          new KinemicaRequestAbortedError(
+            "Kinemica request was aborted by the caller.",
+          ),
+        );
       callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
-
+    });
     try {
-      const response = await this.fetch(`${this.baseUrl}${request.path}`, {
+      return await Promise.race([
+        this.performRequest(request, controller.signal),
+        cancelled,
+      ]);
+    } finally {
+      clearTimeout(timeout);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    }
+  }
+
+  private async performRequest(
+    request: HttpRequest,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await this.fetch(`${this.baseUrl}${request.path}`, {
         method: request.method,
         headers: {
           ...(this.#credential
@@ -168,80 +215,129 @@ export class HttpClient implements KinemicaHttpClient {
           ...request.headers,
         },
         ...(request.rawBody !== undefined
-          ? { body: request.rawBody as BodyInit }
+          ? { body: new Uint8Array(request.rawBody) }
           : request.body === undefined
             ? {}
             : { body: JSON.stringify(request.body) }),
         redirect: "manual",
-        signal: controller.signal,
+        signal,
       });
-      const requestId =
-        response.headers.get("x-kinemica-request-id") ?? undefined;
-      let decoded: unknown;
-      try {
-        decoded = await response.json();
-      } catch {
-        throw new KinemicaApiError("Kinemica returned malformed JSON.", {
-          status: response.status,
-          ...(requestId ? { requestId } : {}),
-        });
-      }
-      if (!response.ok) {
+    } catch {
+      throw new KinemicaConnectionError("Kinemica could not be reached.");
+    }
+    if (signal.aborted) {
+      // Dispose of a late response from a custom transport that ignored abort.
+      void response.body?.cancel().catch(() => {
+        /* best-effort disposal after cancellation */
+      });
+      throw new KinemicaRequestAbortedError("Kinemica request was aborted.");
+    }
+    const sensitiveValues = [
+      ...(this.#credential ? [this.#credential] : []),
+      ...(request.sensitiveValues ?? []),
+    ];
+    const requestId = safeRequestId(
+      response.headers.get("x-kinemica-request-id"),
+      sensitiveValues,
+    );
+    const metadata: KinemicaErrorOptions = {
+      status: response.status,
+      ...(requestId ? { requestId } : {}),
+    };
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      throw new KinemicaConnectionError(
+        "Kinemica response could not be read.",
+        metadata,
+      );
+    }
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(text) as unknown;
+    } catch {
+      if (!response.ok)
         this.throwApiError(
           response.status,
-          decoded,
+          undefined,
           requestId,
-          request.sensitiveValues,
+          sensitiveValues,
         );
-      }
-      return decoded;
-    } catch (error) {
-      if (error instanceof KinemicaApiError) throw error;
-      if (controller.signal.reason === timeoutReason) {
-        throw new KinemicaTimeoutError(
-          `Kinemica request timed out after ${this.timeoutMs}ms.`,
-        );
-      }
-      if (controller.signal.reason === callerAbortReason) {
-        throw new KinemicaRequestAbortedError(
-          "Kinemica request was aborted by the caller.",
-        );
-      }
-      throw new KinemicaConnectionError("Kinemica could not be reached.");
-    } finally {
-      clearTimeout(timeout);
-      callerSignal?.removeEventListener("abort", abortFromCaller);
+      throw new KinemicaApiError("Kinemica returned malformed JSON.", metadata);
     }
+    if (!response.ok)
+      this.throwApiError(response.status, decoded, requestId, sensitiveValues);
+    if (
+      decoded === null ||
+      typeof decoded !== "object" ||
+      Array.isArray(decoded)
+    ) {
+      throw new KinemicaApiError(
+        "Kinemica returned an incompatible response envelope.",
+        metadata,
+      );
+    }
+    // Redact reflected credentials before parsing public fields. Pairing intentionally
+    // returns one new credential, only in data.credential, for explicit secure storage.
+    const body = decoded as Record<string, unknown>;
+    const data = body.data;
+    const pairing =
+      request.path === "/devices/pair" &&
+      data !== null &&
+      typeof data === "object" &&
+      !Array.isArray(data)
+        ? (data as Record<string, unknown>)
+        : undefined;
+    const pairedCredential =
+      typeof pairing?.credential === "string" ? pairing.credential : undefined;
+    if (pairedCredential && pairing) {
+      sensitiveValues.push(pairedCredential);
+      pairing.credential = null;
+    }
+    const sanitized = JSON.parse(
+      JSON.stringify(body),
+      (_key: string, value: unknown) =>
+        typeof value === "string"
+          ? redactSecrets(value, sensitiveValues)
+          : value,
+    ) as Record<string, unknown>;
+    if (pairedCredential)
+      (sanitized.data as Record<string, unknown>).credential = pairedCredential;
+    const bodyRequestId = safeRequestId(sanitized.requestId, sensitiveValues);
+    rememberResponse(sanitized, {
+      ...metadata,
+      ...(bodyRequestId ? { requestId: bodyRequestId } : {}),
+    });
+    return sanitized;
   }
 
   private throwApiError(
     status: number,
     body: unknown,
     headerRequestId: string | undefined,
-    requestSensitiveValues: readonly string[] | undefined,
+    sensitiveValues: readonly string[],
   ): never {
     const parsed = parseApiError(body);
     const code = parsed?.code ?? "internal_error";
     const ErrorType = errorClass(code, status);
-    const sensitiveValues = [
-      ...(this.#credential ? [this.#credential] : []),
-      ...(requestSensitiveValues ?? []),
-    ];
     const safeMessage = parsed?.message
-      ? sensitiveValues.reduce(
-          (message, sensitiveValue) =>
-            sensitiveValue
-              ? message.replaceAll(sensitiveValue, "[REDACTED]")
-              : message,
-          parsed.message,
-        )
+      ? safeDiagnostic(parsed.message, sensitiveValues)
       : `Kinemica request failed with HTTP ${status}.`;
-    const requestId = parsed?.requestId ?? headerRequestId;
+    const requestId =
+      safeRequestId(parsed?.requestId, sensitiveValues) ?? headerRequestId;
     const options: KinemicaErrorOptions = {
       status,
       code,
       ...(requestId ? { requestId } : {}),
-      ...(parsed?.details ? { details: parsed.details } : {}),
+      ...(parsed?.details
+        ? {
+            details: parsed.details.map((detail) => ({
+              field: safeDiagnostic(detail.field, sensitiveValues),
+              message: safeDiagnostic(detail.message, sensitiveValues),
+            })),
+          }
+        : {}),
     };
     throw new ErrorType(safeMessage, options);
   }

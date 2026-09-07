@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { KinemicaDevice } from "../src/index.js";
+import { KinemicaDevice } from "@kinemica/sdk";
 
 export async function pairOnce(
   pairingCode: string,

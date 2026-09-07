@@ -6,11 +6,15 @@ on:
       ref:
         description: Git tag to publish
         required: true
-        default: v0.3.0
+        default: v0.3.1
         type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: npm-release-${{ inputs.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -22,6 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
@@ -33,14 +38,18 @@ jobs:
           cache: pnpm
       - name: Verify release version
         id: version
+        env:
+          RELEASE_REF: ${{ inputs.ref }}
         shell: bash
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          test "${{ inputs.ref }}" = "v${VERSION}" || {
-            echo "Release ref ${{ inputs.ref }} does not match package version v${VERSION}." >&2
+          test "$RELEASE_REF" = "v${VERSION}" || {
+            echo "Release ref does not match package version v${VERSION}." >&2
             exit 1
           }
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_REF^{commit}")"
+          git merge-base --is-ancestor HEAD origin/main
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -52,17 +61,9 @@ jobs:
           set -euo pipefail
           mkdir -p package-artifact
           pnpm pack --pack-destination package-artifact
-          npm pack --dry-run --json >/tmp/npm-pack.json
-          cat /tmp/npm-pack.json
           TARBALL="$(find package-artifact -maxdepth 1 -name '*.tgz' -print -quit)"
           test -n "$TARBALL"
-          tar -tzf "$TARBALL" >/tmp/kinemica-sdk-package-files.txt
-          grep -qx 'package/dist/index.js' /tmp/kinemica-sdk-package-files.txt
-          grep -qx 'package/dist/index.d.ts' /tmp/kinemica-sdk-package-files.txt
-          grep -qx 'package/dist/device.js' /tmp/kinemica-sdk-package-files.txt
-          grep -qx 'package/dist/device.d.ts' /tmp/kinemica-sdk-package-files.txt
-          grep -qx 'package/README.md' /tmp/kinemica-sdk-package-files.txt
-          grep -qx 'package/LICENSE' /tmp/kinemica-sdk-package-files.txt
+          node scripts/package-smoke.mjs "$TARBALL"
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
@@ -89,7 +90,7 @@ jobs:
           name: npm-package
           path: package-artifact
       - name: Publish to npm with provenance
-        run: npm publish ./package-artifact/*.tgz --access public --provenance --loglevel verbose
+        run: npm publish ./package-artifact/*.tgz --access public --provenance --registry=https://registry.npmjs.org
 
   verify-npm:
     name: Verify public npm install (Node ${{ matrix.node-version }})
@@ -113,7 +114,7 @@ jobs:
           cd /tmp/kinemica-sdk-npm-smoke
           npm init -y >/dev/null
           for attempt in {1..12}; do
-            if npm install --no-cache "@kinemica/sdk@${VERSION}"; then
+            if npm install --prefer-online --registry=https://registry.npmjs.org --cache "$RUNNER_TEMP/npm-registry-$attempt" "@kinemica/sdk@${VERSION}"; then
               break
             fi
             if [[ "$attempt" -eq 12 ]]; then

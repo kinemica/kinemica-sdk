@@ -1,5 +1,6 @@
 import { HttpClient, type KinemicaTransportOptions } from "./client.js";
-import { KinemicaApiError, KinemicaValidationError } from "./errors.js";
+import { KinemicaValidationError } from "./errors.js";
+import { parseResponse } from "./response.js";
 import type {
   DeviceEventResult,
   DeviceEventSubmissionResult,
@@ -103,6 +104,7 @@ export class DeviceEventsResource {
       throw new KinemicaValidationError("The device event is invalid.");
     }
 
+    const expectsReview = (params.evidenceIds?.length ?? 0) > 0;
     const response = await this.client.request({
       method: "POST",
       path: "/devices/events",
@@ -120,13 +122,17 @@ export class DeviceEventsResource {
       },
       ...(options ? { options } : {}),
     });
-    try {
-      return parseDeviceEventResponse(response);
-    } catch {
-      throw new KinemicaApiError(
-        "Kinemica returned an incompatible device event response.",
-      );
-    }
+    return parseResponse(
+      response,
+      (value) => {
+        const event = parseDeviceEventResponse(value);
+        const isReview = "work" in event;
+        if (expectsReview !== isReview)
+          throw new Error("Unexpected event result variant.");
+        return event;
+      },
+      "Kinemica returned an incompatible device event response.",
+    );
   }
 }
 
@@ -175,13 +181,11 @@ export class DeviceEvidenceResource {
       rawBody: params.bytes,
       ...(options ? { options } : {}),
     });
-    try {
-      return parseDeviceEvidenceResponse(response);
-    } catch {
-      throw new KinemicaApiError(
-        "Kinemica returned an incompatible device evidence response.",
-      );
-    }
+    return parseResponse(
+      response,
+      parseDeviceEvidenceResponse,
+      "Kinemica returned an incompatible device evidence response.",
+    );
   }
 }
 
@@ -226,25 +230,27 @@ export class KinemicaDevice {
       method: "POST",
       path: "/devices/pair",
       body: { pairingCode: validatedCode },
-      sensitiveValues: [validatedCode],
+      sensitiveValues: [
+        validatedCode,
+        validatedCode.replaceAll("-", "").toUpperCase(),
+        validatedCode.replaceAll("-", "").toLowerCase(),
+      ],
       ...(options.signal ? { options: { signal: options.signal } } : {}),
     });
-    try {
-      const paired = parseDevicePairingResponse(response);
-      return new KinemicaDevice(
-        { credential: paired.credential, ...transport },
-        {
-          deviceId: paired.deviceId,
-          name: paired.name,
-          expiresAt: paired.expiresAt,
-          requestId: paired.requestId,
-        },
-      );
-    } catch {
-      throw new KinemicaApiError(
-        "Kinemica returned an incompatible device pairing response.",
-      );
-    }
+    const paired = parseResponse(
+      response,
+      parseDevicePairingResponse,
+      "Kinemica returned an incompatible device pairing response.",
+    );
+    return new KinemicaDevice(
+      { credential: paired.credential, ...transport },
+      {
+        deviceId: paired.deviceId,
+        name: paired.name,
+        expiresAt: paired.expiresAt,
+        requestId: paired.requestId,
+      },
+    );
   }
 
   get credential(): string {
@@ -270,12 +276,10 @@ export class KinemicaDevice {
       body: {},
       ...(options ? { options } : {}),
     });
-    try {
-      return parseDeviceHeartbeatResponse(response);
-    } catch {
-      throw new KinemicaApiError(
-        "Kinemica returned an incompatible device heartbeat response.",
-      );
-    }
+    return parseResponse(
+      response,
+      parseDeviceHeartbeatResponse,
+      "Kinemica returned an incompatible device heartbeat response.",
+    );
   }
 }

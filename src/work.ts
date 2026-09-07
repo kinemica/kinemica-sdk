@@ -1,4 +1,5 @@
-import { KinemicaApiError, KinemicaValidationError } from "./errors.js";
+import { KinemicaValidationError } from "./errors.js";
+import { parseResponse } from "./response.js";
 import type { KinemicaHttpClient } from "./client.js";
 import type { RequestOptions, Work } from "./types.js";
 import { parseWorkResponse, validateIdentifier } from "./validation.js";
@@ -17,12 +18,10 @@ export class WorkResource {
       path: `/work/${encodeURIComponent(workId)}`,
       ...(options ? { options } : {}),
     });
-    try {
-      return parseWorkResponse(response);
-    } catch {
-      throw new KinemicaApiError(
-        "Kinemica returned an incompatible work response.",
-      );
-    }
+    return parseResponse(
+      response,
+      parseWorkResponse,
+      "Kinemica returned an incompatible work response.",
+    );
   }
 }

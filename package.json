@@ -1,6 +1,6 @@
 {
   "name": "@kinemica/sdk",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "TypeScript SDK for Kinemica physical-world work execution.",
   "keywords": [
     "kinemica",
@@ -34,8 +34,11 @@
   },
   "files": [
     "dist",
+    "src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "publishConfig": {
     "access": "public"
@@ -46,6 +49,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:package": "node scripts/package-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "prepack": "pnpm build"

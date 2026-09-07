@@ -162,7 +162,8 @@ function timestamp(value: unknown, label: string): string {
   if (
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
       result,
-    )
+    ) ||
+    !Number.isFinite(Date.parse(result))
   ) {
     throw new Error(`${label} must be an ISO 8601 timestamp.`);
   }
@@ -440,6 +441,14 @@ export function parseDeviceEventResponse(
     requestId: identifier(envelope.requestId, "response.requestId"),
     replayed: boolean(envelope.replayed, "response.replayed"),
   };
+  if (
+    record.decision !== undefined &&
+    (record.work !== undefined || record.episodeId !== undefined)
+  ) {
+    throw new Error(
+      "Device event response contains conflicting result variants.",
+    );
+  }
   if (record.decision === undefined) {
     const work = object(record.work, "response.data.work");
     return {
@@ -544,26 +553,32 @@ export function parseApiError(value: unknown): ParsedApiError | undefined {
     const details =
       error.details === undefined
         ? undefined
-        : array(error.details, "response.error.details", (candidate, index) => {
-            const detail = object(
-              candidate,
-              `response.error.details[${index}]`,
-            );
-            return {
-              field: boundedString(
-                detail.field,
-                `response.error.details[${index}].field`,
-                1,
-                96,
-              ),
-              message: boundedString(
-                detail.message,
-                `response.error.details[${index}].message`,
-                1,
-                160,
-              ),
-            };
-          });
+        : array(
+            Array.isArray(error.details)
+              ? error.details.slice(0, 16)
+              : error.details,
+            "response.error.details",
+            (candidate, index) => {
+              const detail = object(
+                candidate,
+                `response.error.details[${index}]`,
+              );
+              return {
+                field: boundedString(
+                  detail.field,
+                  `response.error.details[${index}].field`,
+                  1,
+                  96,
+                ),
+                message: boundedString(
+                  detail.message,
+                  `response.error.details[${index}].message`,
+                  1,
+                  160,
+                ),
+              };
+            },
+          );
     return {
       code: enumeration(
         error.code,
@@ -580,7 +595,8 @@ export function parseApiError(value: unknown): ParsedApiError | undefined {
 }
 
 export function validateIdentifier(value: string, label: string): void {
-  if (!identifierPattern.test(value)) throw new Error(`${label} is invalid.`);
+  if (typeof value !== "string" || !identifierPattern.test(value))
+    throw new Error(`${label} is invalid.`);
 }
 
 export function validateIdempotencyKey(value: string): void {
@@ -595,7 +611,10 @@ export function validateIdempotencyKey(value: string): void {
 }
 
 export function validateDeviceCredential(value: string): void {
-  if (!/^kin_device_[A-Za-z0-9_-]{43}$/.test(value)) {
+  if (
+    typeof value !== "string" ||
+    !/^kin_device_[A-Za-z0-9_-]{43}$/.test(value)
+  ) {
     throw new Error("credential is invalid.");
   }
 }
@@ -667,7 +686,8 @@ export function validateDeviceEvidenceOriginalName(
     value !== undefined &&
     (typeof value !== "string" ||
       value.trim().length < 1 ||
-      value.trim().length > 255)
+      value.trim().length > 255 ||
+      !/^[\x20-\x7e\u0080-\u00ff]+$/.test(value))
   ) {
     throw new Error("originalName is invalid.");
   }
