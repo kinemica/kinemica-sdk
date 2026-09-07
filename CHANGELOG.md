@@ -2,6 +2,7 @@
 
 ## 0.3.1
 
+- Update the development-only Vitest runner to its patched 3.2.6 release; runtime dependencies remain zero.
 - Preserve timeout and caller-cancellation errors through response-body reads; skip pre-aborted requests and bound waiting for custom transports.
 - Redact reflected credentials in diagnostics and parsed results; validate request IDs, bound validation details, and reject device credentials supplied as project API keys.
 - Preserve HTTP error classes for non-JSON failures and safe request metadata for incompatible responses.

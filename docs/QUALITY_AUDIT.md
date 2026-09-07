@@ -20,6 +20,8 @@ The SDK remains a small Node.js typed client, not an authority or execution engi
 
 The credential findings concern defense against reflected or malformed diagnostics; the audit did not observe leaked credentials in normal Production responses. Private vulnerability reporting is enabled for the repository.
 
+The dependency audit also identified [GHSA-5xrq-8626-4rwp](https://github.com/vitest-dev/vitest/security/advisories/GHSA-5xrq-8626-4rwp) in the development-only Vitest 3.2.4 runner. The affected UI/browser server is not used by this repository's `vitest run` checks or by SDK consumers. Vitest is nevertheless pinned to patched 3.2.6, and the full dependency audit is a CI/release gate. Runtime dependencies remain zero.
+
 ## Verification
 
 - The original public API tests remain, with regressions for malformed JSON/schemas, typed HTTP errors, reflected secrets, response metadata, aborts, timeout cleanup, input validation, evidence ownership failures, idempotency and overload behavior.
@@ -29,6 +31,7 @@ The credential findings concern defense against reflected or malformed diagnosti
 - Package inspection checks the allowlist, ESM import/export boundary, repository metadata, zero runtime dependencies, source maps and absence of test/internal/secret files. CI covers Node 22/24 and Linux/macOS/Windows package consumers.
 - The installed 0.3.1 tarball passed 38 bounded Production SDK calls: work retrieval, all three server policy outcomes, exact replay/conflict, insufficient scope, opaque cross-workspace lookup, 429, pairing/reused code, heartbeat, legacy device decisions, evidence upload/replay, malformed image, evidence-backed review work, event replay/conflict, cross-device/workspace evidence rejection and revoked credentials. Exactly one HTTP attempt occurred per call, with no 5xx response. Durable project decisions/audit records were checked independently.
 - All synthetic scopes, evidence objects and users were removed and all test credentials revoked. An initial harness run used IDs outside the fixture-cleanup helper's accepted pattern; those exact test scopes were separately removed and absence verified before the corrected run.
+- The exact successful Production test window contained 38 unique API request logs, with zero credential-pattern matches and zero 5xx entries.
 
 ## Compatibility and authority
 
