@@ -1,2 +1,6 @@
 allowBuilds:
   esbuild: true
+# Compatible development-only PostCSS transitive fix for GHSA-68fv-2mgg-jv7q.
+# Keep the ordinary release-age and supply-chain policies enabled.
+overrides:
+  source-map-js@<1.2.2: 1.2.2
