@@ -228,6 +228,27 @@ The SDK does not read a camera, include OpenCV or Picamera, stream video, contro
 
 For a browser camera demo, browser JavaScript sends a bounded snapshot to **your application's authenticated server endpoint**. That server checks the user/session, CSRF/origin protection, authorization for the configured device, and upload limits before invoking this SDK with a server-held device credential. The browser must never receive the device credential or choose the server's credential, workspace, Storage path or evidence owner. Keep camera capture in the application's browser code and SDK calls in a Node.js server process. A Node.js process physically running on an edge device is supported; browser bundles and non-Node edge runtimes are not tested targets.
 
+## Hybrid worker contracts — unreleased source addition
+
+This repository also defines a small, transport-neutral `kinemica.worker.v1` contract for typed
+worker skill descriptions, invocations, factual execution reports and cancellation requests. It is
+**not included in the published 0.3.1 package** and adds no execution API, controller or local policy.
+Use the reviewed source build if coordinating this new contract; do not expect an npm installation
+of 0.3.1 to export it.
+
+Sensors continue to report observations through `device.events.submit()`. Platform owns AI/human
+routing, policy, approval and any later execution request. A sensor event, a capability description,
+or an executor's SUCCEEDED report cannot authorize motion, verify evidence or close work. The same
+typed skill boundary can be implemented by a digital twin or a separately commissioned physical
+worker; changing its mode string does not make a simulator hardware-ready.
+
+Read the [worker contract and exact Main/ARM/Device handoff](https://github.com/kinemica/kinemica-sdk/blob/main/docs/WORKER_CONTRACT.md)
+before implementing it. The [physical sensor example](https://github.com/kinemica/kinemica-sdk/blob/main/examples/physical-sensor.ts)
+uses an existing, server-configured event route. The [digital robot example](https://github.com/kinemica/kinemica-sdk/blob/main/examples/digital-robot.ts)
+only formats a supplied twin observation; it does not execute motion or call an undocumented endpoint.
+Public execution transport, approval-gated machine release and sensor-to-task evidence binding
+remain separate Platform integration gates.
+
 ## Types and version compatibility
 
 The package is ESM-only: use `import`, or dynamic `import()` from CommonJS. There is no `require()` export. Node.js 22 and 24 are tested, with strict TypeScript 5.9 using NodeNext and Bundler resolution. Public types are exported from `@kinemica/sdk`; deep imports are intentionally blocked. Public source files are included solely to make source/declaration maps useful.

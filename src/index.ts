@@ -53,3 +53,18 @@ export type {
   WorkerReference,
   WorkerType,
 } from "./types.js";
+export type {
+  WorkerCancellationRequest,
+  WorkerExecutionBinding,
+  WorkerExecutionFailure,
+  WorkerExecutionFailureCode,
+  WorkerExecutionReference,
+  WorkerExecutionReport,
+  WorkerJsonObject,
+  WorkerJsonValue,
+  WorkerScalarValue,
+  WorkerSchemaReference,
+  WorkerSkillCatalog,
+  WorkerSkillDescriptor,
+  WorkerSkillInvocation,
+} from "./worker.js";

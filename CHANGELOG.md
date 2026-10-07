@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Add transport-neutral `kinemica.worker.v1` TypeScript contracts for correlated skill descriptors,
+  invocations, factual reports, execution failures and cancellation requests.
+- Document runtime bounds, server authority, explicit private-wire migration boundaries and the
+  exact Main/ARM/Device handoff; add physical-sensor and pure digital-robot report examples.
+- Keep the existing v0.1–v0.3 client methods, runtime behavior and zero runtime dependencies unchanged.
+- Update development-only Vitest to 4.1.11 and TypeScript-ESLint to 8.48.1, and refresh vulnerable
+  transitive dependencies to satisfy the existing dependency-audit gate; no SDK runtime dependency is added.
+
+These additive types are eligible for a future minor release. They are not in npm `0.3.1`, do not
+add deployed execution endpoints, and do not change Production behavior. No npm publication is
+claimed by this entry.
+
 ## 0.3.1
 
 - Update the development-only Vitest runner to its patched 3.2.6 release; runtime dependencies remain zero.
