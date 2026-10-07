@@ -46,7 +46,7 @@ try {
   );
   for (const entry of entries) {
     assert(
-      /^package\/(?:package\.json|README\.md|LICENSE|CHANGELOG\.md|SECURITY\.md|src\/[a-z-]+\.ts|dist\/[a-z-]+\.(?:js|d\.ts)(?:\.map)?)$/.test(
+      /^package\/(?:package\.json|README\.md|LICENSE|CHANGELOG\.md|SECURITY\.md|docs\/WORKER_CONTRACT\.md|src\/[a-z-]+\.ts|dist\/[a-z-]+\.(?:js|d\.ts)(?:\.map)?)$/.test(
         entry,
       ),
       `Unexpected tarball entry: ${entry}`,
@@ -59,6 +59,14 @@ try {
   );
   assert.equal(packedManifest.name, "@kinemica/sdk");
   assert.equal(packedManifest.version, manifest.version);
+  assert(
+    packedManifest.files.includes("docs/WORKER_CONTRACT.md"),
+    "Worker contract is missing from the publication manifest",
+  );
+  assert(
+    entries.includes("package/docs/WORKER_CONTRACT.md"),
+    "Worker contract is missing from the tarball",
+  );
   assert.equal(
     packedManifest.repository.url,
     "git+https://github.com/kinemica/kinemica-sdk.git",
@@ -112,10 +120,18 @@ try {
     "typescript@5.9.2",
     "@types/node@24.3.0",
   ]);
-  writeFileSync(
-    join(temporary, "public-api.mts"),
-    readFileSync(join(root, "tests/consumer/public-api.mts")),
-  );
+  const consumerDirectory = join(root, "tests/consumer");
+  const consumerFixtures = readdirSync(consumerDirectory)
+    .filter((filename) => filename.endsWith(".mts"))
+    .sort();
+  assert(consumerFixtures.includes("public-api.mts"));
+  assert(consumerFixtures.includes("worker-contract.mts"));
+  for (const filename of consumerFixtures) {
+    writeFileSync(
+      join(temporary, filename),
+      readFileSync(join(consumerDirectory, filename)),
+    );
+  }
   writeFileSync(
     join(temporary, "smoke.mjs"),
     `
@@ -149,7 +165,7 @@ try {
       module,
       "--moduleResolution",
       resolution,
-      "public-api.mts",
+      ...consumerFixtures,
     ]);
   }
   console.log(

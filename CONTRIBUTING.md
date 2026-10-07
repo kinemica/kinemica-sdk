@@ -2,6 +2,14 @@
 
 The SDK deliberately mirrors only Kinemica's reviewed public Developer and Connected Devices API contracts. Changes must not add local policy, undocumented endpoints, automatic request retries or direct database access.
 
+The unreleased [worker contract](docs/WORKER_CONTRACT.md) is a reviewed transport-neutral type
+boundary, not an exception permitting undocumented HTTP methods. Keep its source version distinct
+from existing private machine wire protocols. Skill schemas are immutable, locally installed
+agreements; no runtime fetching, evaluation or SDK-owned policy/state engine is allowed. Include
+compile-time correlation tests and explicit Main/adapter runtime obligations when changing it.
+Sensor observations, executor results, independent verification and human acceptance must remain
+separate. Never claim an unimplemented public transport or physical-hardware readiness.
+
 Before proposing a change:
 
 1. Create a focused branch.
